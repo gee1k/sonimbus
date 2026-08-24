@@ -1,23 +1,5 @@
 import SwiftUI
 
-private enum NowPlayingFocus: Hashable {
-    case close
-    case fmDislike
-    case artist(Int)
-    case album
-    case favorite
-    case moreActions
-    case seek
-    case shuffle
-    case previous
-    case play
-    case next
-    case repeatMode
-    case lyricsRetry
-    case lyricsMode
-    case queueMode
-}
-
 private enum NowPlayingDetailDestination: Identifiable {
     case artist(ArtistRef)
     case album(AlbumRef)
@@ -36,6 +18,12 @@ struct NowPlayingView: View {
         case queue
     }
 
+    private enum FocusRegion {
+        case controls
+        case lyrics
+        case queue
+    }
+
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.resetFocus) private var resetFocus
     @Environment(PlayerService.self) private var player
@@ -49,6 +37,8 @@ struct NowPlayingView: View {
     @State private var lastSelectedDetailFocus: NowPlayingFocus?
     @State private var acceptsPanelActivation = false
     @State private var controlsReady = false
+    @State private var focusRegion = FocusRegion.controls
+    @State private var lastDirectionalEventTime: TimeInterval = 0
     @FocusState private var focusedControl: NowPlayingFocus?
     @FocusState private var focusedLyricID: Int?
     @FocusState private var focusedQueueID: Int?
@@ -80,6 +70,7 @@ struct NowPlayingView: View {
         .onAppear {
             acceptsPanelActivation = false
             controlsReady = false
+            focusRegion = .controls
             focusedLyricID = nil
             focusedQueueID = nil
             focusedControl = initialControlFocus
@@ -92,6 +83,7 @@ struct NowPlayingView: View {
             // short gate it can immediately toggle the newly focused control.
             try? await Task.sleep(for: .milliseconds(520))
             guard !Task.isCancelled else { return }
+            focusRegion = .controls
             focusedQueueID = nil
             focusedControl = nil
             await Task.yield()
@@ -104,8 +96,7 @@ struct NowPlayingView: View {
             controlsReady = true
         }
         .onChange(of: player.currentTrack?.id) { oldID, newID in
-            focusedLyricID = nil
-            if oldID == nil, newID != nil {
+            if oldID != newID, newID != nil {
                 requestControlFocus(.play)
             } else if newID == nil {
                 requestControlFocus(.close)
@@ -203,7 +194,7 @@ struct NowPlayingView: View {
             .disabled(!controlsReady)
             .accessibilityLabel("返回")
             .onMoveCommand { direction in
-                if direction == .down { requestControlFocus(.favorite) }
+                moveControlFocus(from: .close, direction: direction)
             }
 
             Spacer()
@@ -285,12 +276,7 @@ struct NowPlayingView: View {
                             .disabled(!controlsReady)
                             .accessibilityLabel("减少类似推荐并播放下一首")
                             .onMoveCommand { direction in
-                                switch direction {
-                                case .up: requestControlFocus(.close)
-                                case .right: requestControlFocus(.favorite)
-                                case .down: requestControlFocus(metadataFocusBelowActions)
-                                default: break
-                                }
+                                moveControlFocus(from: .fmDislike, direction: direction)
                             }
                         }
 
@@ -304,20 +290,7 @@ struct NowPlayingView: View {
                         .disabled(!controlsReady)
                         .accessibilityLabel(account.isLiked(track) ? "取消喜欢" : "喜欢")
                         .onMoveCommand { direction in
-                            switch direction {
-                            case .up: requestControlFocus(.close)
-                            case .down: requestControlFocus(metadataFocusBelowActions)
-                            case .left where player.source == .personalFM:
-                                requestControlFocus(.fmDislike)
-                            case .left:
-                                if let artist = navigableArtists.last {
-                                    requestControlFocus(.artist(artist.id))
-                                } else if navigableAlbum != nil {
-                                    requestControlFocus(.album)
-                                }
-                            case .right: requestControlFocus(.moreActions)
-                            default: break
-                            }
+                            moveControlFocus(from: .favorite, direction: direction)
                         }
 
                         moreActionsMenu(for: track)
@@ -345,11 +318,7 @@ struct NowPlayingView: View {
                             .disabled(!controlsReady)
                             .accessibilityLabel("查看歌手\(artist.name)")
                             .onMoveCommand { direction in
-                                switch direction {
-                                case .up: requestControlFocus(.favorite)
-                                case .down: requestControlFocus(.seek)
-                                default: break
-                                }
+                                moveControlFocus(from: .artist(artist.id), direction: direction)
                             }
                         }
 
@@ -372,11 +341,7 @@ struct NowPlayingView: View {
                             .disabled(!controlsReady)
                             .accessibilityLabel("查看专辑\(album.name)")
                             .onMoveCommand { direction in
-                                switch direction {
-                                case .up: requestControlFocus(.moreActions)
-                                case .down: requestControlFocus(.seek)
-                                default: break
-                                }
+                                moveControlFocus(from: .album, direction: direction)
                             }
                         }
                     }
@@ -460,12 +425,7 @@ struct NowPlayingView: View {
         .disabled(!controlsReady)
         .accessibilityLabel("更多操作")
         .onMoveCommand { direction in
-            switch direction {
-            case .up: requestControlFocus(.close)
-            case .left: requestControlFocus(.favorite)
-            case .down: requestControlFocus(metadataFocusBelowActions)
-            default: break
-            }
+            moveControlFocus(from: .moreActions, direction: direction)
         }
     }
 
@@ -519,26 +479,18 @@ struct NowPlayingView: View {
                                 .accessibilityValue(DisplayFormatter.duration(line.time))
                                 .accessibilityHint("按下可从这句歌词开始播放")
                                 .onMoveCommand { direction in
-                                    switch direction {
-                                    case .up where index > lines.startIndex:
-                                        requestLyricFocus(lines[index - 1].id)
-                                    case .up:
-                                        requestControlFocus(.close)
-                                    case .down where index < lines.index(before: lines.endIndex):
-                                        requestLyricFocus(lines[index + 1].id)
-                                    case .down:
-                                        requestControlFocus(.seek)
-                                    case .left:
-                                        requestControlFocus(metadataFocusBelowActions)
-                                    default:
-                                        break
-                                    }
+                                    moveLyricFocus(
+                                        at: index,
+                                        in: lines,
+                                        direction: direction
+                                    )
                                 }
                                 .id(line.id)
                             }
                             Color.clear.frame(height: 230)
                         }
                     }
+                    .scrollDisabled(focusRegion != .lyrics)
                     .mask(
                         LinearGradient(
                             stops: [
@@ -595,7 +547,7 @@ struct NowPlayingView: View {
                     .focused($focusedControl, equals: .lyricsRetry)
                     .disabled(!controlsReady)
                     .onMoveCommand { direction in
-                        if direction == .down { requestControlFocus(.lyricsMode) }
+                        moveControlFocus(from: .lyricsRetry, direction: direction)
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -666,11 +618,11 @@ struct NowPlayingView: View {
                                         }
                                     }
                                     .onMoveCommand { direction in
-                                        switch direction {
-                                        case .up: requestControlFocus(queueHeaderFocus)
-                                        case .down: requestControlFocus(.seek)
-                                        default: break
-                                        }
+                                        moveQueueFocus(
+                                            at: index,
+                                            currentTrackID: track.id,
+                                            direction: direction
+                                        )
                                     }
                                     .id(track.id)
                                 }
@@ -678,12 +630,11 @@ struct NowPlayingView: View {
                             .padding(.horizontal, 34)
                             .padding(.vertical, 42)
                         }
+                        .scrollDisabled(focusRegion != .queue)
                         .scrollClipDisabled()
                         .onAppear {
                             guard let currentID = player.currentTrack?.id else { return }
                             proxy.scrollTo(currentID, anchor: .center)
-                            focusedControl = nil
-                            focusedQueueID = currentID
                         }
                         .onChange(of: player.currentTrack?.id) { _, currentID in
                             guard let currentID else { return }
@@ -722,11 +673,7 @@ struct NowPlayingView: View {
                 .accessibilityLabel(player.shuffleEnabled ? "关闭随机播放" : "开启随机播放")
                 .disabled(player.source == .personalFM || !controlsReady)
                 .onMoveCommand { direction in
-                    switch direction {
-                    case .right: requestControlFocus(.repeatMode)
-                    case .down: focusCurrentQueueTrackOrSeek()
-                    default: break
-                    }
+                    moveControlFocus(from: .shuffle, direction: direction)
                 }
 
                 Button(action: player.cycleRepeat) {
@@ -737,11 +684,7 @@ struct NowPlayingView: View {
                 .accessibilityLabel(repeatAccessibilityLabel)
                 .disabled(player.source == .personalFM || !controlsReady)
                 .onMoveCommand { direction in
-                    switch direction {
-                    case .left: requestControlFocus(.shuffle)
-                    case .down: focusCurrentQueueTrackOrSeek()
-                    default: break
-                    }
+                    moveControlFocus(from: .repeatMode, direction: direction)
                 }
             }
         }
@@ -754,10 +697,9 @@ struct NowPlayingView: View {
             TVSeekBar(
                 progress: player.progress,
                 duration: player.duration,
-                seek: player.seek(to:),
                 isEnabled: controlsReady,
                 focus: $focusedControl,
-                moveUp: moveFocusAboveTimeline
+                onMove: moveTimelineFocus
             )
 
             HStack {
@@ -787,7 +729,7 @@ struct NowPlayingView: View {
                     .accessibilityLabel("上一首")
                     .disabled(!player.canGoPrevious || !controlsReady)
                     .onMoveCommand { direction in
-                        if direction == .right { requestControlFocus(.play) }
+                        moveControlFocus(from: .previous, direction: direction)
                     }
 
                     Button {
@@ -808,12 +750,7 @@ struct NowPlayingView: View {
                     .prefersDefaultFocus(initialControlFocus == .play, in: focusScope)
                     .accessibilityLabel(player.isPlaying ? "暂停" : "播放")
                     .onMoveCommand { direction in
-                        switch direction {
-                        case .left: requestControlFocus(.previous)
-                        case .right: requestControlFocus(.next)
-                        case .up: requestControlFocus(.seek)
-                        default: break
-                        }
+                        moveControlFocus(from: .play, direction: direction)
                     }
 
                     Button(action: player.next) {
@@ -824,7 +761,7 @@ struct NowPlayingView: View {
                     .accessibilityLabel("下一首")
                     .disabled(!player.canGoNext || !controlsReady)
                     .onMoveCommand { direction in
-                        if direction == .left { requestControlFocus(.play) }
+                        moveControlFocus(from: .next, direction: direction)
                     }
                 }
             }
@@ -855,7 +792,7 @@ struct NowPlayingView: View {
                     panel = .queue
                 }
             }
-            focusedControl = focus
+            requestControlFocus(focus)
         } label: {
             ZStack(alignment: .bottom) {
                 Image(systemName: symbol)
@@ -873,26 +810,7 @@ struct NowPlayingView: View {
         .prefersDefaultFocus(focus == initialControlFocus, in: focusScope)
         .accessibilityLabel(isActive ? "隐藏\(label)" : "显示\(label)")
         .onMoveCommand { direction in
-            guard direction == .up else { return }
-            if target == .queue, panel == .queue, let currentID = player.currentTrack?.id {
-                requestQueueFocus(currentID)
-            } else if target == .lyrics, panel == .lyrics, focusActiveLyric() {
-                return
-            } else if target == .lyrics, player.lyricsErrorMessage != nil {
-                requestControlFocus(.lyricsRetry)
-            } else {
-                requestControlFocus(.seek)
-            }
-        }
-    }
-
-    private func moveFocusAboveTimeline() {
-        if panel == .queue, let currentID = player.currentTrack?.id {
-            requestQueueFocus(currentID)
-        } else if panel == .lyrics, focusActiveLyric() {
-            return
-        } else {
-            requestControlFocus(metadataFocusBelowActions)
+            movePanelFocus(target, from: focus, direction: direction)
         }
     }
 
@@ -905,31 +823,145 @@ struct NowPlayingView: View {
         }
     }
 
-    private func requestControlFocus(_ target: NowPlayingFocus) {
-        Task { @MainActor in
-            await Task.yield()
-            focusedLyricID = nil
-            focusedQueueID = nil
-            focusedControl = target
+    private var focusContext: NowPlayingFocusContext {
+        NowPlayingFocusContext(
+            artistIDs: navigableArtists.map(\.id),
+            hasAlbum: navigableAlbum != nil,
+            isPersonalFM: player.source == .personalFM,
+            canGoPrevious: player.canGoPrevious,
+            canGoNext: player.canGoNext
+        )
+    }
+
+    private func moveControlFocus(from source: NowPlayingFocus, direction: MoveCommandDirection) {
+        guard let direction = NowPlayingFocusDirection(direction) else { return }
+        guard claimDirectionalEvent() else { return }
+        moveControlFocus(from: source, direction: direction)
+    }
+
+    private func moveControlFocus(from source: NowPlayingFocus, direction: NowPlayingFocusDirection) {
+        if (source == .shuffle || source == .repeatMode), direction == .down {
+            focusCurrentQueueTrackOrSeek()
+            return
         }
+        guard let destination = NowPlayingFocusPolicy.destination(
+            from: source,
+            direction: direction,
+            context: focusContext
+        ) else { return }
+        requestControlFocus(destination)
+    }
+
+    private func movePanelFocus(
+        _ target: Panel,
+        from focus: NowPlayingFocus,
+        direction: MoveCommandDirection
+    ) {
+        guard let direction = NowPlayingFocusDirection(direction) else { return }
+        guard claimDirectionalEvent() else { return }
+        guard direction == .up else {
+            moveControlFocus(from: focus, direction: direction)
+            return
+        }
+
+        if target == .queue, panel == .queue, let currentID = player.currentTrack?.id {
+            requestQueueFocus(currentID)
+        } else if target == .lyrics, panel == .lyrics, focusActiveLyric() {
+            return
+        } else if target == .lyrics, player.lyricsErrorMessage != nil {
+            requestControlFocus(.lyricsRetry)
+        } else {
+            requestControlFocus(.seek)
+        }
+    }
+
+    private func moveTimelineFocus(_ direction: MoveCommandDirection) {
+        guard let direction = NowPlayingFocusDirection(direction) else { return }
+        guard claimDirectionalEvent() else { return }
+        switch direction {
+        case .left:
+            player.seek(to: player.progress - 10)
+        case .right:
+            player.seek(to: player.progress + 10)
+        case .up:
+            requestControlFocus(metadataFocusBelowActions)
+        case .down:
+            requestControlFocus(.play)
+        }
+    }
+
+    private func moveLyricFocus(
+        at index: Int,
+        in lines: [LyricLine],
+        direction: MoveCommandDirection
+    ) {
+        guard claimDirectionalEvent() else { return }
+        switch direction {
+        case .up where index > lines.startIndex:
+            requestLyricFocus(lines[index - 1].id)
+        case .up:
+            requestControlFocus(.close)
+        case .down where index < lines.index(before: lines.endIndex):
+            requestLyricFocus(lines[index + 1].id)
+        case .down:
+            requestControlFocus(.seek)
+        case .left:
+            requestControlFocus(metadataFocusBelowActions)
+        case .right:
+            requestControlFocus(.lyricsMode)
+        default:
+            break
+        }
+    }
+
+    private func moveQueueFocus(
+        at index: Int,
+        currentTrackID: Int,
+        direction: MoveCommandDirection
+    ) {
+        guard claimDirectionalEvent() else { return }
+        switch direction {
+        case .left where index > player.playbackQueue.startIndex:
+            requestQueueFocus(player.playbackQueue[index - 1].id)
+        case .right where index < player.playbackQueue.index(before: player.playbackQueue.endIndex):
+            requestQueueFocus(player.playbackQueue[index + 1].id)
+        case .up:
+            requestControlFocus(queueHeaderFocus)
+        case .down:
+            requestControlFocus(.seek)
+        case .left, .right:
+            requestQueueFocus(currentTrackID)
+        default:
+            break
+        }
+    }
+
+    private func claimDirectionalEvent() -> Bool {
+        let now = ProcessInfo.processInfo.systemUptime
+        guard now - lastDirectionalEventTime >= 0.09 else { return false }
+        lastDirectionalEventTime = now
+        return true
+    }
+
+    private func requestControlFocus(_ target: NowPlayingFocus) {
+        focusRegion = .controls
+        focusedLyricID = nil
+        focusedQueueID = nil
+        focusedControl = target
     }
 
     private func requestQueueFocus(_ trackID: Int) {
-        Task { @MainActor in
-            await Task.yield()
-            focusedControl = nil
-            focusedLyricID = nil
-            focusedQueueID = trackID
-        }
+        focusRegion = .queue
+        focusedControl = nil
+        focusedLyricID = nil
+        focusedQueueID = trackID
     }
 
     private func requestLyricFocus(_ lineID: Int) {
-        Task { @MainActor in
-            await Task.yield()
-            focusedControl = nil
-            focusedQueueID = nil
-            focusedLyricID = lineID
-        }
+        focusRegion = .lyrics
+        focusedControl = nil
+        focusedQueueID = nil
+        focusedLyricID = lineID
     }
 
     @discardableResult
@@ -1037,10 +1069,22 @@ struct NowPlayingView: View {
         guard let focus = lastSelectedDetailFocus else { return }
         Task { @MainActor in
             await Task.yield()
-            focusedControl = focus
+            requestControlFocus(focus)
         }
     }
 
+}
+
+private extension NowPlayingFocusDirection {
+    init?(_ direction: MoveCommandDirection) {
+        switch direction {
+        case .up: self = .up
+        case .down: self = .down
+        case .left: self = .left
+        case .right: self = .right
+        default: return nil
+        }
+    }
 }
 
 private struct NowPlayingLyricButtonStyle: ButtonStyle {
@@ -1121,10 +1165,9 @@ private struct TVSeekBar: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let progress: TimeInterval
     let duration: TimeInterval
-    let seek: (TimeInterval) -> Void
     let isEnabled: Bool
     let focus: FocusState<NowPlayingFocus?>.Binding
-    let moveUp: () -> Void
+    let onMove: (MoveCommandDirection) -> Void
 
     var body: some View {
         let isFocused = focus.wrappedValue == .seek
@@ -1148,15 +1191,7 @@ private struct TVSeekBar: View {
         .contentShape(Rectangle())
         .focusable(isEnabled)
         .focused(focus, equals: .seek)
-        .onMoveCommand { direction in
-            switch direction {
-            case .left: seek(progress - 10)
-            case .right: seek(progress + 10)
-            case .up: moveUp()
-            case .down: focus.wrappedValue = .play
-            default: break
-            }
-        }
+        .onMoveCommand(perform: onMove)
         .animation(reduceMotion ? nil : .easeOut(duration: 0.14), value: isFocused)
         .accessibilityLabel("播放进度")
         .accessibilityValue("\(DisplayFormatter.duration(progress)) / \(DisplayFormatter.duration(duration))")

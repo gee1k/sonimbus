@@ -189,6 +189,39 @@ func resolvesMVQueueOrder() throws {
     #expect(MVQueuePolicy.adjacentIndex(from: 0, count: 1, offset: 1) == nil)
 }
 
+@Test("正在播放页焦点遵循固定的四向导航图")
+func resolvesNowPlayingFocusGraph() {
+    let context = NowPlayingFocusContext(
+        artistIDs: [10, 20],
+        hasAlbum: true,
+        isPersonalFM: false,
+        canGoPrevious: true,
+        canGoNext: true
+    )
+
+    #expect(NowPlayingFocusPolicy.destination(from: .close, direction: .down, context: context) == .artist(10))
+    #expect(NowPlayingFocusPolicy.destination(from: .artist(10), direction: .up, context: context) == .close)
+    #expect(NowPlayingFocusPolicy.destination(from: .artist(10), direction: .right, context: context) == .artist(20))
+    #expect(NowPlayingFocusPolicy.destination(from: .artist(20), direction: .right, context: context) == .album)
+    #expect(NowPlayingFocusPolicy.destination(from: .album, direction: .up, context: context) == .favorite)
+    #expect(NowPlayingFocusPolicy.destination(from: .seek, direction: .down, context: context) == .play)
+    #expect(NowPlayingFocusPolicy.destination(from: .previous, direction: .right, context: context) == .play)
+    #expect(NowPlayingFocusPolicy.destination(from: .play, direction: .right, context: context) == .next)
+    #expect(NowPlayingFocusPolicy.destination(from: .next, direction: .right, context: context) == .lyricsMode)
+    #expect(NowPlayingFocusPolicy.destination(from: .lyricsMode, direction: .right, context: context) == .queueMode)
+    #expect(NowPlayingFocusPolicy.destination(from: .queueMode, direction: .left, context: context) == .lyricsMode)
+
+    let personalFM = NowPlayingFocusContext(
+        artistIDs: [10],
+        hasAlbum: true,
+        isPersonalFM: true,
+        canGoPrevious: false,
+        canGoNext: true
+    )
+    #expect(NowPlayingFocusPolicy.destination(from: .album, direction: .up, context: personalFM) == .fmDislike)
+    #expect(NowPlayingFocusPolicy.destination(from: .play, direction: .left, context: personalFM) == .play)
+}
+
 @Test("MV 模型兼容推荐、详情与播放地址字段")
 func decodesMVShapes() throws {
     let summaryData = Data(#"{"id":77,"name":"现场 MV","picUrl":"http://example.com/mv.jpg","artistId":9,"artistName":"歌手","duration":245000,"playCount":"12345","brs":{"480":1,"1080":1}}"#.utf8)

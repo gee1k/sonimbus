@@ -87,6 +87,190 @@ enum MVQueuePolicy {
     }
 }
 
+enum NowPlayingFocus: Hashable {
+    case close
+    case fmDislike
+    case artist(Int)
+    case album
+    case favorite
+    case moreActions
+    case seek
+    case shuffle
+    case previous
+    case play
+    case next
+    case repeatMode
+    case lyricsRetry
+    case lyricsMode
+    case queueMode
+}
+
+enum NowPlayingFocusDirection {
+    case up
+    case down
+    case left
+    case right
+}
+
+struct NowPlayingFocusContext {
+    let artistIDs: [Int]
+    let hasAlbum: Bool
+    let isPersonalFM: Bool
+    let canGoPrevious: Bool
+    let canGoNext: Bool
+
+    var firstMetadata: NowPlayingFocus? {
+        if let artistID = artistIDs.first { return .artist(artistID) }
+        if hasAlbum { return .album }
+        return nil
+    }
+
+    var lastMetadata: NowPlayingFocus? {
+        if hasAlbum { return .album }
+        if let artistID = artistIDs.last { return .artist(artistID) }
+        return nil
+    }
+
+    var primaryAction: NowPlayingFocus {
+        isPersonalFM ? .fmDislike : .favorite
+    }
+}
+
+enum NowPlayingFocusPolicy {
+    static func destination(
+        from source: NowPlayingFocus,
+        direction: NowPlayingFocusDirection,
+        context: NowPlayingFocusContext
+    ) -> NowPlayingFocus? {
+        switch source {
+        case .close:
+            return switch direction {
+            case .down: context.firstMetadata ?? context.primaryAction
+            default: .close
+            }
+
+        case .fmDislike:
+            return switch direction {
+            case .up: .close
+            case .right: .favorite
+            case .down: context.lastMetadata ?? .seek
+            case .left: .fmDislike
+            }
+
+        case .favorite:
+            return switch direction {
+            case .up: .close
+            case .right: .moreActions
+            case .down: context.lastMetadata ?? .seek
+            case .left: context.isPersonalFM ? .fmDislike : .favorite
+            }
+
+        case .moreActions:
+            return switch direction {
+            case .up: .close
+            case .left: .favorite
+            case .down: context.lastMetadata ?? .seek
+            case .right: .moreActions
+            }
+
+        case .artist(let artistID):
+            guard let index = context.artistIDs.firstIndex(of: artistID) else {
+                return context.firstMetadata ?? context.primaryAction
+            }
+            return switch direction {
+            case .up: .close
+            case .down: .seek
+            case .left:
+                index > 0 ? .artist(context.artistIDs[index - 1]) : .artist(artistID)
+            case .right:
+                if index < context.artistIDs.index(before: context.artistIDs.endIndex) {
+                    .artist(context.artistIDs[index + 1])
+                } else {
+                    context.hasAlbum ? .album : .artist(artistID)
+                }
+            }
+
+        case .album:
+            return switch direction {
+            case .up: context.primaryAction
+            case .down: .seek
+            case .left:
+                context.artistIDs.last.map(NowPlayingFocus.artist) ?? .album
+            case .right: .album
+            }
+
+        case .seek:
+            return switch direction {
+            case .up: context.lastMetadata ?? context.primaryAction
+            case .down: .play
+            case .left, .right: .seek
+            }
+
+        case .previous:
+            return switch direction {
+            case .up: .seek
+            case .right: .play
+            case .left, .down: .previous
+            }
+
+        case .play:
+            return switch direction {
+            case .up: .seek
+            case .left: context.canGoPrevious ? .previous : .play
+            case .right: context.canGoNext ? .next : .lyricsMode
+            case .down: .play
+            }
+
+        case .next:
+            return switch direction {
+            case .up: .seek
+            case .left: .play
+            case .right: .lyricsMode
+            case .down: .next
+            }
+
+        case .lyricsMode:
+            return switch direction {
+            case .left: context.canGoNext ? .next : .play
+            case .right: .queueMode
+            case .down: .lyricsMode
+            case .up: nil
+            }
+
+        case .queueMode:
+            return switch direction {
+            case .left: .lyricsMode
+            case .right, .down: .queueMode
+            case .up: nil
+            }
+
+        case .shuffle:
+            return switch direction {
+            case .up: .close
+            case .left: .shuffle
+            case .right: .repeatMode
+            case .down: nil
+            }
+
+        case .repeatMode:
+            return switch direction {
+            case .up: .close
+            case .left: .shuffle
+            case .right: .repeatMode
+            case .down: nil
+            }
+
+        case .lyricsRetry:
+            return switch direction {
+            case .up: .close
+            case .left: context.lastMetadata ?? context.primaryAction
+            case .right: .lyricsRetry
+            case .down: .lyricsMode
+            }
+        }
+    }
+}
+
 struct ArtistRef: Codable, Hashable, Identifiable {
     let id: Int
     let name: String
