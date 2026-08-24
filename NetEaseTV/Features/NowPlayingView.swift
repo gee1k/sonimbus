@@ -1,5 +1,23 @@
 import SwiftUI
 
+private enum NowPlayingFocus: Hashable {
+    case close
+    case fmDislike
+    case artist(Int)
+    case album
+    case favorite
+    case moreActions
+    case seek
+    case shuffle
+    case previous
+    case play
+    case next
+    case repeatMode
+    case lyricsRetry
+    case lyricsMode
+    case queueMode
+}
+
 private enum NowPlayingDetailDestination: Identifiable {
     case artist(ArtistRef)
     case album(AlbumRef)
@@ -18,12 +36,6 @@ struct NowPlayingView: View {
         case queue
     }
 
-    private enum FocusRegion {
-        case controls
-        case lyrics
-        case queue
-    }
-
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.resetFocus) private var resetFocus
     @Environment(PlayerService.self) private var player
@@ -37,11 +49,7 @@ struct NowPlayingView: View {
     @State private var lastSelectedDetailFocus: NowPlayingFocus?
     @State private var acceptsPanelActivation = false
     @State private var controlsReady = false
-    @State private var focusRegion = FocusRegion.controls
-    @State private var lastDirectionalEventTime: TimeInterval = 0
     @FocusState private var focusedControl: NowPlayingFocus?
-    @FocusState private var focusedLyricID: Int?
-    @FocusState private var focusedQueueID: Int?
 
     init(onClose: @escaping () -> Void) {
         self.onClose = onClose
@@ -70,9 +78,6 @@ struct NowPlayingView: View {
         .onAppear {
             acceptsPanelActivation = false
             controlsReady = false
-            focusRegion = .controls
-            focusedLyricID = nil
-            focusedQueueID = nil
             focusedControl = initialControlFocus
         }
         .task {
@@ -83,8 +88,6 @@ struct NowPlayingView: View {
             // short gate it can immediately toggle the newly focused control.
             try? await Task.sleep(for: .milliseconds(520))
             guard !Task.isCancelled else { return }
-            focusRegion = .controls
-            focusedQueueID = nil
             focusedControl = nil
             await Task.yield()
             focusedControl = initialControlFocus
@@ -193,9 +196,6 @@ struct NowPlayingView: View {
             .focused($focusedControl, equals: .close)
             .disabled(!controlsReady)
             .accessibilityLabel("返回")
-            .onMoveCommand { direction in
-                moveControlFocus(from: .close, direction: direction)
-            }
 
             Spacer()
 
@@ -223,6 +223,7 @@ struct NowPlayingView: View {
             }
         }
         .frame(height: 56)
+        .focusSection()
     }
 
     private var stage: some View {
@@ -237,6 +238,7 @@ struct NowPlayingView: View {
                         }
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .focusSection()
                 }
             } else {
                 artworkAndMetadata(size: 500)
@@ -275,9 +277,6 @@ struct NowPlayingView: View {
                             .focused($focusedControl, equals: .fmDislike)
                             .disabled(!controlsReady)
                             .accessibilityLabel("减少类似推荐并播放下一首")
-                            .onMoveCommand { direction in
-                                moveControlFocus(from: .fmDislike, direction: direction)
-                            }
                         }
 
                         Button {
@@ -289,14 +288,12 @@ struct NowPlayingView: View {
                         .focused($focusedControl, equals: .favorite)
                         .disabled(!controlsReady)
                         .accessibilityLabel(account.isLiked(track) ? "取消喜欢" : "喜欢")
-                        .onMoveCommand { direction in
-                            moveControlFocus(from: .favorite, direction: direction)
-                        }
 
                         moreActionsMenu(for: track)
                     }
                 }
             }
+            .focusSection()
 
             if !navigableArtists.isEmpty || navigableAlbum != nil {
                 ScrollView(.horizontal, showsIndicators: false) {
@@ -317,9 +314,6 @@ struct NowPlayingView: View {
                             .focused($focusedControl, equals: .artist(artist.id))
                             .disabled(!controlsReady)
                             .accessibilityLabel("查看歌手\(artist.name)")
-                            .onMoveCommand { direction in
-                                moveControlFocus(from: .artist(artist.id), direction: direction)
-                            }
                         }
 
                         if let album = navigableAlbum {
@@ -340,15 +334,13 @@ struct NowPlayingView: View {
                             .focused($focusedControl, equals: .album)
                             .disabled(!controlsReady)
                             .accessibilityLabel("查看专辑\(album.name)")
-                            .onMoveCommand { direction in
-                                moveControlFocus(from: .album, direction: direction)
-                            }
                         }
                     }
                     .padding(.horizontal, 3)
                     .padding(.vertical, 6)
                 }
                 .frame(height: 52)
+                .focusSection()
             } else if let artistNames = player.currentTrack?.artistNames, !artistNames.isEmpty {
                 Text(artistNames)
                     .font(.system(size: 21, weight: .semibold, design: .rounded))
@@ -424,9 +416,6 @@ struct NowPlayingView: View {
         .focused($focusedControl, equals: .moreActions)
         .disabled(!controlsReady)
         .accessibilityLabel("更多操作")
-        .onMoveCommand { direction in
-            moveControlFocus(from: .moreActions, direction: direction)
-        }
     }
 
     private var lyricsPanel: some View {
@@ -445,52 +434,42 @@ struct NowPlayingView: View {
                     ScrollView(showsIndicators: false) {
                         LazyVStack(alignment: .leading, spacing: 34) {
                             Color.clear.frame(height: 210)
-                            ForEach(Array(lines.enumerated()), id: \.element.id) { index, line in
+                            ForEach(lines) { line in
                                 let active = line.id == player.activeLyricIndex
-                                let focused = focusedLyricID == line.id
-                                Button {
-                                    player.seek(to: line.time)
-                                } label: {
-                                    VStack(alignment: .leading, spacing: 9) {
-                                        Text(line.text.isEmpty ? "♪" : line.text)
-                                            .font(.system(
-                                                size: active ? 48 : 36,
-                                                weight: active ? .bold : .semibold,
-                                                design: .rounded
-                                            ))
-                                        if player.showsTranslatedLyrics,
-                                           let translation = line.translation, !translation.isEmpty {
-                                            Text(translation)
-                                                .font(.system(size: active ? 25 : 21, weight: .semibold, design: .rounded))
-                                                .foregroundStyle(lyricSecondaryColor(active: active, focused: focused, emphasis: 0.78))
-                                        }
-                                        if player.showsTranslatedLyrics,
-                                           let romaji = line.romaji, !romaji.isEmpty {
-                                            Text(romaji)
-                                                .font(.headline)
-                                                .foregroundStyle(lyricSecondaryColor(active: active, focused: focused, emphasis: 0.54))
-                                        }
+                                VStack(alignment: .leading, spacing: 9) {
+                                    Text(line.text.isEmpty ? "♪" : line.text)
+                                        .font(.system(
+                                            size: active ? 48 : 36,
+                                            weight: active ? .bold : .semibold,
+                                            design: .rounded
+                                        ))
+                                    if player.showsTranslatedLyrics,
+                                       let translation = line.translation, !translation.isEmpty {
+                                        Text(translation)
+                                            .font(.system(size: active ? 25 : 21, weight: .semibold, design: .rounded))
+                                            .foregroundStyle(lyricSecondaryColor(active: active, emphasis: 0.78))
                                     }
-                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    if player.showsTranslatedLyrics,
+                                       let romaji = line.romaji, !romaji.isEmpty {
+                                        Text(romaji)
+                                            .font(.headline)
+                                            .foregroundStyle(lyricSecondaryColor(active: active, emphasis: 0.54))
+                                    }
                                 }
-                                .buttonStyle(NowPlayingLyricButtonStyle(isActive: active))
-                                .focused($focusedLyricID, equals: line.id)
+                                .padding(.horizontal, 18)
+                                .padding(.vertical, 12)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .foregroundStyle(active ? Color.white : Color.white.opacity(0.30))
+                                .animation(reduceMotion ? nil : .easeOut(duration: 0.24), value: active)
                                 .accessibilityLabel(line.text.isEmpty ? "音乐间奏" : line.text)
                                 .accessibilityValue(DisplayFormatter.duration(line.time))
-                                .accessibilityHint("按下可从这句歌词开始播放")
-                                .onMoveCommand { direction in
-                                    moveLyricFocus(
-                                        at: index,
-                                        in: lines,
-                                        direction: direction
-                                    )
-                                }
                                 .id(line.id)
                             }
                             Color.clear.frame(height: 230)
                         }
                     }
-                    .scrollDisabled(focusRegion != .lyrics)
+                    .scrollDisabled(true)
+                    .allowsHitTesting(false)
                     .mask(
                         LinearGradient(
                             stops: [
@@ -508,7 +487,7 @@ struct NowPlayingView: View {
                         proxy.scrollTo(index, anchor: .center)
                     }
                     .onChange(of: player.activeLyricIndex) { _, index in
-                        guard focusedLyricID == nil, let index else { return }
+                        guard let index else { return }
                         if reduceMotion {
                             proxy.scrollTo(index, anchor: .center)
                         } else {
@@ -546,9 +525,6 @@ struct NowPlayingView: View {
                     .buttonStyle(TVPillButtonStyle(prominent: true))
                     .focused($focusedControl, equals: .lyricsRetry)
                     .disabled(!controlsReady)
-                    .onMoveCommand { direction in
-                        moveControlFocus(from: .lyricsRetry, direction: direction)
-                    }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
             } else {
@@ -609,7 +585,6 @@ struct NowPlayingView: View {
                                         .frame(width: 235, alignment: .leading)
                                     }
                                     .buttonStyle(NowPlayingQueueCardStyle(isCurrent: player.currentTrack?.id == track.id))
-                                    .focused($focusedQueueID, equals: track.id)
                                     .contextMenu {
                                         if player.currentTrack?.id != track.id {
                                             Button("从播放队列移除", role: .destructive) {
@@ -617,20 +592,12 @@ struct NowPlayingView: View {
                                             }
                                         }
                                     }
-                                    .onMoveCommand { direction in
-                                        moveQueueFocus(
-                                            at: index,
-                                            currentTrackID: track.id,
-                                            direction: direction
-                                        )
-                                    }
                                     .id(track.id)
                                 }
                             }
                             .padding(.horizontal, 34)
                             .padding(.vertical, 42)
                         }
-                        .scrollDisabled(focusRegion != .queue)
                         .scrollClipDisabled()
                         .onAppear {
                             guard let currentID = player.currentTrack?.id else { return }
@@ -650,6 +617,7 @@ struct NowPlayingView: View {
                 }
             }
         }
+        .focusSection()
     }
 
     private var queueHeader: some View {
@@ -664,32 +632,36 @@ struct NowPlayingView: View {
 
             Spacer()
 
-            HStack(spacing: 8) {
-                Button(action: player.toggleShuffle) {
-                    Image(systemName: "shuffle")
-                }
-                .buttonStyle(TVPlaybackButtonStyle(size: 54, active: player.shuffleEnabled))
-                .focused($focusedControl, equals: .shuffle)
-                .accessibilityLabel(player.shuffleEnabled ? "关闭随机播放" : "开启随机播放")
-                .disabled(player.source == .personalFM || !controlsReady)
-                .onMoveCommand { direction in
-                    moveControlFocus(from: .shuffle, direction: direction)
-                }
+            if player.source == .personalFM {
+                Label("私人 FM 自动续播", systemImage: "infinity")
+                    .font(.caption.bold())
+                    .foregroundStyle(.white.opacity(0.58))
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 9)
+                    .background(Color.white.opacity(0.08), in: Capsule())
+            } else {
+                HStack(spacing: 8) {
+                    Button(action: player.toggleShuffle) {
+                        Image(systemName: "shuffle")
+                    }
+                    .buttonStyle(TVPlaybackButtonStyle(size: 54, active: player.shuffleEnabled))
+                    .focused($focusedControl, equals: .shuffle)
+                    .accessibilityLabel(player.shuffleEnabled ? "关闭随机播放" : "开启随机播放")
+                    .disabled(!controlsReady)
 
-                Button(action: player.cycleRepeat) {
-                    Image(systemName: player.repeatMode == .one ? "repeat.1" : "repeat")
-                }
-                .buttonStyle(TVPlaybackButtonStyle(size: 54, active: player.repeatMode != .off))
-                .focused($focusedControl, equals: .repeatMode)
-                .accessibilityLabel(repeatAccessibilityLabel)
-                .disabled(player.source == .personalFM || !controlsReady)
-                .onMoveCommand { direction in
-                    moveControlFocus(from: .repeatMode, direction: direction)
+                    Button(action: player.cycleRepeat) {
+                        Image(systemName: player.repeatMode == .one ? "repeat.1" : "repeat")
+                    }
+                    .buttonStyle(TVPlaybackButtonStyle(size: 54, active: player.repeatMode != .off))
+                    .focused($focusedControl, equals: .repeatMode)
+                    .accessibilityLabel(repeatAccessibilityLabel)
+                    .disabled(!controlsReady)
                 }
             }
         }
         .padding(.horizontal, 34)
         .frame(height: 72)
+        .focusSection()
     }
 
     private var playbackChrome: some View {
@@ -699,7 +671,7 @@ struct NowPlayingView: View {
                 duration: player.duration,
                 isEnabled: controlsReady,
                 focus: $focusedControl,
-                onMove: moveTimelineFocus
+                onMove: moveTimeline
             )
 
             HStack {
@@ -718,6 +690,7 @@ struct NowPlayingView: View {
                         panelButton(.lyrics, symbol: "quote.bubble.fill", focus: .lyricsMode, label: "歌词")
                         panelButton(.queue, symbol: "list.bullet", focus: .queueMode, label: "播放队列")
                     }
+                    .focusSection()
                 }
 
                 HStack(spacing: 16) {
@@ -728,9 +701,6 @@ struct NowPlayingView: View {
                     .focused($focusedControl, equals: .previous)
                     .accessibilityLabel("上一首")
                     .disabled(!player.canGoPrevious || !controlsReady)
-                    .onMoveCommand { direction in
-                        moveControlFocus(from: .previous, direction: direction)
-                    }
 
                     Button {
                         guard controlsReady else { return }
@@ -749,9 +719,6 @@ struct NowPlayingView: View {
                     .focused($focusedControl, equals: .play)
                     .prefersDefaultFocus(initialControlFocus == .play, in: focusScope)
                     .accessibilityLabel(player.isPlaying ? "暂停" : "播放")
-                    .onMoveCommand { direction in
-                        moveControlFocus(from: .play, direction: direction)
-                    }
 
                     Button(action: player.next) {
                         Image(systemName: "forward.fill")
@@ -760,10 +727,8 @@ struct NowPlayingView: View {
                     .focused($focusedControl, equals: .next)
                     .accessibilityLabel("下一首")
                     .disabled(!player.canGoNext || !controlsReady)
-                    .onMoveCommand { direction in
-                        moveControlFocus(from: .next, direction: direction)
-                    }
                 }
+                .focusSection()
             }
             .frame(height: 72)
         }
@@ -809,173 +774,24 @@ struct NowPlayingView: View {
         .disabled(!controlsReady && focus != initialControlFocus)
         .prefersDefaultFocus(focus == initialControlFocus, in: focusScope)
         .accessibilityLabel(isActive ? "隐藏\(label)" : "显示\(label)")
-        .onMoveCommand { direction in
-            movePanelFocus(target, from: focus, direction: direction)
-        }
     }
 
-    private func focusCurrentQueueTrackOrSeek() {
-        if let currentID = player.currentTrack?.id,
-           player.playbackQueue.contains(where: { $0.id == currentID }) {
-            requestQueueFocus(currentID)
-        } else {
-            requestControlFocus(.seek)
-        }
-    }
-
-    private var focusContext: NowPlayingFocusContext {
-        NowPlayingFocusContext(
-            artistIDs: navigableArtists.map(\.id),
-            hasAlbum: navigableAlbum != nil,
-            isPersonalFM: player.source == .personalFM,
-            canGoPrevious: player.canGoPrevious,
-            canGoNext: player.canGoNext
-        )
-    }
-
-    private func moveControlFocus(from source: NowPlayingFocus, direction: MoveCommandDirection) {
-        guard let direction = NowPlayingFocusDirection(direction) else { return }
-        guard claimDirectionalEvent() else { return }
-        moveControlFocus(from: source, direction: direction)
-    }
-
-    private func moveControlFocus(from source: NowPlayingFocus, direction: NowPlayingFocusDirection) {
-        if (source == .shuffle || source == .repeatMode), direction == .down {
-            focusCurrentQueueTrackOrSeek()
-            return
-        }
-        guard let destination = NowPlayingFocusPolicy.destination(
-            from: source,
-            direction: direction,
-            context: focusContext
-        ) else { return }
-        requestControlFocus(destination)
-    }
-
-    private func movePanelFocus(
-        _ target: Panel,
-        from focus: NowPlayingFocus,
-        direction: MoveCommandDirection
-    ) {
-        guard let direction = NowPlayingFocusDirection(direction) else { return }
-        guard claimDirectionalEvent() else { return }
-        guard direction == .up else {
-            moveControlFocus(from: focus, direction: direction)
-            return
-        }
-
-        if target == .queue, panel == .queue, let currentID = player.currentTrack?.id {
-            requestQueueFocus(currentID)
-        } else if target == .lyrics, panel == .lyrics, focusActiveLyric() {
-            return
-        } else if target == .lyrics, player.lyricsErrorMessage != nil {
-            requestControlFocus(.lyricsRetry)
-        } else {
-            requestControlFocus(.seek)
-        }
-    }
-
-    private func moveTimelineFocus(_ direction: MoveCommandDirection) {
-        guard let direction = NowPlayingFocusDirection(direction) else { return }
-        guard claimDirectionalEvent() else { return }
+    private func moveTimeline(_ direction: MoveCommandDirection) {
         switch direction {
         case .left:
             player.seek(to: player.progress - 10)
         case .right:
             player.seek(to: player.progress + 10)
-        case .up:
-            requestControlFocus(metadataFocusBelowActions)
-        case .down:
-            requestControlFocus(.play)
-        }
-    }
-
-    private func moveLyricFocus(
-        at index: Int,
-        in lines: [LyricLine],
-        direction: MoveCommandDirection
-    ) {
-        guard claimDirectionalEvent() else { return }
-        switch direction {
-        case .up where index > lines.startIndex:
-            requestLyricFocus(lines[index - 1].id)
-        case .up:
-            requestControlFocus(.close)
-        case .down where index < lines.index(before: lines.endIndex):
-            requestLyricFocus(lines[index + 1].id)
-        case .down:
-            requestControlFocus(.seek)
-        case .left:
-            requestControlFocus(metadataFocusBelowActions)
-        case .right:
-            requestControlFocus(.lyricsMode)
         default:
             break
         }
-    }
-
-    private func moveQueueFocus(
-        at index: Int,
-        currentTrackID: Int,
-        direction: MoveCommandDirection
-    ) {
-        guard claimDirectionalEvent() else { return }
-        switch direction {
-        case .left where index > player.playbackQueue.startIndex:
-            requestQueueFocus(player.playbackQueue[index - 1].id)
-        case .right where index < player.playbackQueue.index(before: player.playbackQueue.endIndex):
-            requestQueueFocus(player.playbackQueue[index + 1].id)
-        case .up:
-            requestControlFocus(queueHeaderFocus)
-        case .down:
-            requestControlFocus(.seek)
-        case .left, .right:
-            requestQueueFocus(currentTrackID)
-        default:
-            break
-        }
-    }
-
-    private func claimDirectionalEvent() -> Bool {
-        let now = ProcessInfo.processInfo.systemUptime
-        guard now - lastDirectionalEventTime >= 0.09 else { return false }
-        lastDirectionalEventTime = now
-        return true
     }
 
     private func requestControlFocus(_ target: NowPlayingFocus) {
-        focusRegion = .controls
-        focusedLyricID = nil
-        focusedQueueID = nil
         focusedControl = target
     }
 
-    private func requestQueueFocus(_ trackID: Int) {
-        focusRegion = .queue
-        focusedControl = nil
-        focusedLyricID = nil
-        focusedQueueID = trackID
-    }
-
-    private func requestLyricFocus(_ lineID: Int) {
-        focusRegion = .lyrics
-        focusedControl = nil
-        focusedQueueID = nil
-        focusedLyricID = lineID
-    }
-
-    @discardableResult
-    private func focusActiveLyric() -> Bool {
-        guard let lines = player.lyrics?.lines, !lines.isEmpty else { return false }
-        let lineID = player.activeLyricIndex
-            .flatMap { lines.indices.contains($0) ? lines[$0].id : nil }
-            ?? lines[0].id
-        requestLyricFocus(lineID)
-        return true
-    }
-
-    private func lyricSecondaryColor(active: Bool, focused: Bool, emphasis: Double) -> Color {
-        if focused { return .white.opacity(active ? 0.88 : 0.72) }
+    private func lyricSecondaryColor(active: Bool, emphasis: Double) -> Color {
         return .white.opacity(active ? emphasis : max(0.24, emphasis * 0.42))
     }
 
@@ -1006,16 +822,6 @@ struct NowPlayingView: View {
         return album
     }
 
-    private var metadataFocusBelowActions: NowPlayingFocus {
-        if navigableAlbum != nil { return .album }
-        if let artist = navigableArtists.last { return .artist(artist.id) }
-        return .seek
-    }
-
-    private var queueHeaderFocus: NowPlayingFocus {
-        player.source == .personalFM ? .favorite : .shuffle
-    }
-
     private func closePlayer() {
         onClose()
     }
@@ -1034,7 +840,6 @@ struct NowPlayingView: View {
     private func restorePanelAfterQueue() {
         panel = panelBeforeQueue
         panelBeforeQueue = nil
-        focusedQueueID = nil
         requestControlFocus(.queueMode)
     }
 
@@ -1073,43 +878,6 @@ struct NowPlayingView: View {
         }
     }
 
-}
-
-private extension NowPlayingFocusDirection {
-    init?(_ direction: MoveCommandDirection) {
-        switch direction {
-        case .up: self = .up
-        case .down: self = .down
-        case .left: self = .left
-        case .right: self = .right
-        default: return nil
-        }
-    }
-}
-
-private struct NowPlayingLyricButtonStyle: ButtonStyle {
-    @Environment(\.isFocused) private var isFocused
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    let isActive: Bool
-
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .padding(.horizontal, 18)
-            .padding(.vertical, 12)
-            .foregroundStyle(isFocused || isActive ? Color.white : Color.white.opacity(0.30))
-            .background {
-                RoundedRectangle(cornerRadius: 20, style: .continuous)
-                    .fill(Color.white.opacity(isFocused ? 0.13 : 0))
-            }
-            .overlay {
-                RoundedRectangle(cornerRadius: 20, style: .continuous)
-                    .stroke(Color.white.opacity(isFocused ? 0.28 : 0), lineWidth: 2)
-            }
-            .scaleEffect(isFocused && !reduceMotion ? 1.025 : (configuration.isPressed ? 0.985 : 1), anchor: .leading)
-            .shadow(color: .black.opacity(isFocused ? 0.24 : 0), radius: 16, y: 8)
-            .animation(reduceMotion ? nil : .easeOut(duration: 0.15), value: isFocused)
-            .animation(reduceMotion ? nil : .easeOut(duration: 0.24), value: isActive)
-    }
 }
 
 private struct NowPlayingArtistButtonStyle: ButtonStyle {
