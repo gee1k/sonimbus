@@ -5,6 +5,8 @@ final class SearchSession {
     var query = ""
     var scope = NeteaseAPI.SearchType.songs
     var result: NeteaseAPI.SearchResult?
+    var songCatalogArtist: ArtistSummary?
+    var songCatalogHasMore = false
 }
 
 private enum SearchFocus: Hashable {
@@ -89,6 +91,16 @@ struct SearchView: View {
         .onChange(of: focusedResultID) { _, id in
             if let id { lastFocusedResultID = id }
         }
+        .onChange(of: query) { _, value in
+            guard value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+            searchGeneration += 1
+            isSearching = false
+            isLoadingMore = false
+            errorMessage = nil
+            result = nil
+            session.songCatalogArtist = nil
+            session.songCatalogHasMore = false
+        }
         .task(id: focusRestorationGeneration) { await restoreNavigationFocus() }
     }
 
@@ -103,6 +115,9 @@ struct SearchView: View {
                 ScrollViewReader { proxy in
                     ScrollView {
                         LazyVStack(spacing: 9) {
+                            if let artist = session.songCatalogArtist {
+                                catalogHeader(artist)
+                            }
                             ForEach(Array(tracks.enumerated()), id: \.element.id) { index, track in
                                 TrackRow(track: track, index: index, tracks: tracks, source: .search)
                                     .id(track.id)
@@ -130,6 +145,24 @@ struct SearchView: View {
                 MVCard(mv: $0, width: 350, queue: videos)
             }
         }
+    }
+
+    private func catalogHeader(_ artist: ArtistSummary) -> some View {
+        HStack(spacing: 20) {
+            ArtworkView(url: artist.artworkURL, cornerRadius: 14)
+                .frame(width: 72, height: 72)
+            VStack(alignment: .leading, spacing: 6) {
+                Text("\(artist.name)的完整曲库")
+                    .font(.title3.bold())
+                Text("含网易云暂不可播放曲目；播放时会自动尝试补全音源。")
+                    .font(.callout)
+                    .foregroundStyle(TVTheme.secondaryText)
+            }
+            Spacer()
+        }
+        .padding(.horizontal, 18)
+        .padding(.vertical, 14)
+        .accessibilityElement(children: .combine)
     }
 
     private func cardGrid<Item: Identifiable, Card: View>(
@@ -299,14 +332,39 @@ struct SearchView: View {
         focusedResultID = nil
         pendingResultFocusID = nil
         errorMessage = nil
+        session.songCatalogArtist = nil
+        session.songCatalogHasMore = false
         do {
-            let response = try await NeteaseAPI.search(keyword, type: requestedScope)
+            var response: NeteaseAPI.SearchResult
+            var matchedCatalogArtist: ArtistSummary?
+            var matchedCatalogHasMore = false
+            if requestedScope == .songs {
+                async let regularSearch = NeteaseAPI.search(keyword, type: .songs)
+                async let artistSearch = NeteaseAPI.search(keyword, type: .artists, limit: 10)
+                response = try await regularSearch
+                if let artistResult = try? await artistSearch,
+                   let artist = exactArtist(in: artistResult.artists ?? [], matching: keyword),
+                   let catalog = try? await NeteaseAPI.artistSongs(id: artist.id),
+                   !catalog.songs.isEmpty {
+                    response = replacingSongs(
+                        in: response,
+                        with: catalog.songs,
+                        total: artist.musicSize
+                    )
+                    matchedCatalogArtist = artist
+                    matchedCatalogHasMore = catalog.hasMore
+                }
+            } else {
+                response = try await NeteaseAPI.search(keyword, type: requestedScope)
+            }
             guard generation == searchGeneration else { return }
             guard requestedScope == scope,
                   keyword == query.trimmingCharacters(in: .whitespacesAndNewlines) else {
                 isSearching = false
                 return
             }
+            session.songCatalogArtist = matchedCatalogArtist
+            session.songCatalogHasMore = matchedCatalogHasMore
             result = response
             recordRecentQuery(keyword)
         } catch {
@@ -333,17 +391,33 @@ struct SearchView: View {
             if generation == searchGeneration { isLoadingMore = false }
         }
         do {
-            let next = try await NeteaseAPI.search(
-                keyword,
-                type: requestedScope,
-                offset: resultItemCount(current)
-            )
+            let next: NeteaseAPI.SearchResult
+            var catalogHasMore: Bool?
+            if requestedScope == .songs, let artist = session.songCatalogArtist {
+                let page = try await NeteaseAPI.artistSongs(
+                    id: artist.id,
+                    offset: current.songs?.count ?? 0
+                )
+                next = replacingSongs(
+                    in: current,
+                    with: page.songs,
+                    total: artist.musicSize
+                )
+                catalogHasMore = page.hasMore
+            } else {
+                next = try await NeteaseAPI.search(
+                    keyword,
+                    type: requestedScope,
+                    offset: resultItemCount(current)
+                )
+            }
             guard generation == searchGeneration,
                   requestedScope == scope,
                   keyword == query.trimmingCharacters(in: .whitespacesAndNewlines) else { return }
             let firstNewID = firstNewResultID(current, with: next)
             focusedResultID = nil
             result = merged(current, with: next)
+            if let catalogHasMore { session.songCatalogHasMore = catalogHasMore }
             pendingResultFocusID = firstNewID
         } catch {
             guard generation == searchGeneration,
@@ -353,6 +427,9 @@ struct SearchView: View {
     }
 
     private func hasMore(_ value: NeteaseAPI.SearchResult) -> Bool {
+        if scope == .songs, session.songCatalogArtist != nil {
+            return session.songCatalogHasMore
+        }
         let count = resultItemCount(value)
         guard count > 0 else { return false }
         if let total = resultTotalCount(value) { return count < total }
@@ -418,6 +495,42 @@ struct SearchView: View {
             playlistCount: next.playlistCount ?? current.playlistCount,
             mvCount: next.mvCount ?? current.mvCount
         )
+    }
+
+    private func replacingSongs(
+        in result: NeteaseAPI.SearchResult,
+        with songs: [Track],
+        total: Int?
+    ) -> NeteaseAPI.SearchResult {
+        NeteaseAPI.SearchResult(
+            songs: songs,
+            albums: result.albums,
+            artists: result.artists,
+            playlists: result.playlists,
+            mvs: result.mvs,
+            songCount: total ?? songs.count,
+            albumCount: result.albumCount,
+            artistCount: result.artistCount,
+            playlistCount: result.playlistCount,
+            mvCount: result.mvCount
+        )
+    }
+
+    private func exactArtist(in artists: [ArtistSummary], matching keyword: String) -> ArtistSummary? {
+        let term = normalizedSearchTerm(keyword)
+        return artists.first { artist in
+            normalizedSearchTerm(artist.name) == term
+                || artist.alias.contains { normalizedSearchTerm($0) == term }
+        }
+    }
+
+    private func normalizedSearchTerm(_ value: String) -> String {
+        value
+            .folding(
+                options: [.caseInsensitive, .diacriticInsensitive, .widthInsensitive],
+                locale: .current
+            )
+            .filter { !$0.isWhitespace }
     }
 
     private func unique<Item: Identifiable>(_ items: [Item]) -> [Item] where Item.ID: Hashable {

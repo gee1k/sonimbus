@@ -474,13 +474,13 @@ struct TrackRow: View {
                                 .foregroundStyle(TVTheme.accent)
                                 .overlay(Capsule().stroke(TVTheme.accent.opacity(0.7)))
                         }
-                        if track.noCopyright {
-                            Text("无版权")
+                        if track.isPlaybackUnavailable {
+                            Text(track.isCopyrightUnavailable ? "无版权" : "不可用")
                                 .font(.caption2.bold())
                                 .padding(.horizontal, 6)
                                 .padding(.vertical, 2)
-                                .foregroundStyle(.white.opacity(0.56))
-                                .overlay(Capsule().stroke(Color.white.opacity(0.24)))
+                                .foregroundStyle(Color.gray)
+                                .overlay(Capsule().stroke(Color.gray.opacity(0.58)))
                         }
                     }
                     Text(track.artistNames + (track.album.name.isEmpty ? "" : " · \(track.album.name)"))

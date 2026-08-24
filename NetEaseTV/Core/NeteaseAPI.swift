@@ -339,6 +339,25 @@ enum NeteaseAPI {
         let more: Bool?
     }
 
+    struct ArtistSongsResponse: Decodable {
+        let songs: [Track]
+        let hasMore: Bool
+
+        private enum CodingKeys: String, CodingKey {
+            case songs, more
+        }
+
+        init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            songs = (try? container.decode([Track].self, forKey: .songs)) ?? []
+            if let value = try? container.decode(Bool.self, forKey: .more) {
+                hasMore = value
+            } else {
+                hasMore = ((try? container.decode(Int.self, forKey: .more)) ?? 0) != 0
+            }
+        }
+    }
+
     static func artist(id: Int) async throws -> ArtistResponse {
         try await weapi(ArtistResponse.self, "/v1/artist/\(id)")
     }
@@ -348,6 +367,21 @@ enum NeteaseAPI {
             ArtistAlbumsResponse.self,
             "/artist/albums/\(id)",
             ["limit": limit, "offset": offset, "total": true]
+        )
+    }
+
+    static func artistSongs(id: Int, limit: Int = 100, offset: Int = 0) async throws -> ArtistSongsResponse {
+        try await weapi(
+            ArtistSongsResponse.self,
+            "/v1/artist/songs",
+            [
+                "id": id,
+                "private_cloud": "true",
+                "work_type": 1,
+                "order": "hot",
+                "limit": limit,
+                "offset": offset,
+            ]
         )
     }
 

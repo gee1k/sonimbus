@@ -138,6 +138,12 @@ struct Track: Codable, Hashable, Identifiable {
     var duration: TimeInterval { TimeInterval(durationMS) / 1_000 }
     var subtitle: String? { translatedNames.first ?? alias.first }
     var artworkURL: URL? { album.picUrl.flatMap { ArtworkURL.make($0, size: 800) } }
+    var isCopyrightUnavailable: Bool {
+        noCopyright || (embeddedPrivilege?.st ?? 0) < 0
+    }
+    var isPlaybackUnavailable: Bool {
+        isCopyrightUnavailable || embeddedPrivilege?.pl == 0
+    }
 
     private enum CodingKeys: String, CodingKey {
         case id, name, ar, artists, al, album, dt, duration, alia, alias, tns, fee

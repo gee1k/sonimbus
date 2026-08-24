@@ -11,6 +11,17 @@ The NetEase `weapi`/`eapi` request flow, endpoint mapping, tolerant response mod
 
 The applicable license text is included at `Licenses/Kumone-LGPL-3.0.txt`.
 
+## UnblockNeteaseMusic server
+
+- Project: `UnblockNeteaseMusic/server`
+- Source: https://github.com/UnblockNeteaseMusic/server
+- Referenced revision: `1d64281c0fae81a4e3cf21f176706b0baa3a606d`
+- License: GNU Lesser General Public License v3.0 only
+
+The Bodian provider request sequence, signing inputs, and compatibility behavior are adapted from and informed by this project. The provider integration, stream-duration validation, and tvOS playback flow in this repository were implemented independently in Swift.
+
+The applicable license text is included at `Licenses/Kumone-LGPL-3.0.txt`.
+
 ## NeteaseCloudMusicApiEnhanced
 
 - Project: `NeteaseCloudMusicApiEnhanced/api-enhanced`

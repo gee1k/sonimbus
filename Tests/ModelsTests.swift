@@ -14,9 +14,11 @@ func matchesAlternativeTrackByDuration() {
         UnblockService.preferredMatchIndex(
             durationsMS: [120_000, 130_000, 140_000],
             targetDurationMS: 200_000
-        ) == 0
+        ) == nil
     )
     #expect(UnblockService.preferredMatchIndex(durationsMS: [], targetDurationMS: 200_000) == nil)
+    #expect(UnblockService.streamDurationIsPlausible(269.4, target: 269))
+    #expect(!UnblockService.streamDurationIsPlausible(11.31, target: 269))
 }
 
 @Test("云盘上传接口兼容字符串与数字 ID")
@@ -46,10 +48,12 @@ func decodesTrackShapes() throws {
     let modern = Data(#"{"id":1,"name":"现代","ar":[{"id":2,"name":"歌手"}],"al":{"id":3,"name":"专辑","picUrl":"http://example.com/a.jpg"},"dt":123456,"alia":[],"tns":["Modern"],"noCopyrightRcmd":{"type":1}}"#.utf8)
     let legacy = Data(#"{"id":4,"name":"旧版","artists":[{"id":5,"name":"Artist"}],"album":{"id":6,"name":"Album"},"duration":654321,"alias":["别名"]}"#.utf8)
     let explicitlyPlayable = Data(#"{"id":7,"name":"可播放","ar":[],"al":{"id":0,"name":""},"dt":1000,"noCopyrightRcmd":false}"#.utf8)
+    let unavailable = Data(#"{"id":8,"name":"灰歌","ar":[],"al":{"id":0,"name":""},"dt":269000,"privilege":{"id":8,"st":-200,"pl":0}}"#.utf8)
 
     let first = try JSONDecoder().decode(Track.self, from: modern)
     let second = try JSONDecoder().decode(Track.self, from: legacy)
     let third = try JSONDecoder().decode(Track.self, from: explicitlyPlayable)
+    let fourth = try JSONDecoder().decode(Track.self, from: unavailable)
 
     #expect(first.artistNames == "歌手")
     #expect(first.durationMS == 123456)
@@ -59,6 +63,19 @@ func decodesTrackShapes() throws {
     #expect(second.album.name == "Album")
     #expect(second.subtitle == "别名")
     #expect(!third.noCopyright)
+    #expect(fourth.isCopyrightUnavailable)
+    #expect(fourth.isPlaybackUnavailable)
+}
+
+@Test("歌手完整曲库兼容数字 more 字段")
+func decodesArtistSongCatalog() throws {
+    let response = try JSONDecoder().decode(
+        NeteaseAPI.ArtistSongsResponse.self,
+        from: Data(#"{"songs":[],"more":1}"#.utf8)
+    )
+
+    #expect(response.songs.isEmpty)
+    #expect(response.hasMore)
 }
 
 @Test("播放次数与时长格式适合电视 UI")

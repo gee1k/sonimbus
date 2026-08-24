@@ -46,6 +46,8 @@ struct NowPlayingView: View {
     @State private var panel: Panel?
     @State private var panelBeforeQueue: Panel?
     @State private var selectedDetail: NowPlayingDetailDestination?
+    @State private var isDetailPlayerPresented = false
+    @State private var detailPath = NavigationPath()
     @State private var lastSelectedDetailFocus: NowPlayingFocus?
     @State private var acceptsPanelActivation = false
     @State private var controlsReady = false
@@ -60,7 +62,10 @@ struct NowPlayingView: View {
     var body: some View {
         ZStack {
             background
-            if player.currentTrack == nil {
+            if let selectedDetail {
+                detailCover(selectedDetail)
+                    .zIndex(2)
+            } else if player.currentTrack == nil {
                 emptyPlayer
             } else {
                 VStack(spacing: 0) {
@@ -110,8 +115,12 @@ struct NowPlayingView: View {
                 requestControlFocus(.close)
             }
         }
-        .fullScreenCover(item: $selectedDetail, onDismiss: restoreDetailFocus) { destination in
-            detailCover(destination)
+        .onChange(of: selectedDetail?.id) { oldID, newID in
+            if oldID == nil, newID != nil {
+                detailPath = NavigationPath()
+            } else if oldID != nil, newID == nil {
+                detailCoverDidDismiss()
+            }
         }
         .onExitCommand(perform: handleExitCommand)
     }
@@ -749,29 +758,49 @@ struct NowPlayingView: View {
 
     @ViewBuilder
     private func detailCover(_ destination: NowPlayingDetailDestination) -> some View {
-        NavigationStack {
+        NavigationStack(path: $detailPath) {
             Group {
                 switch destination {
                 case .artist(let artist): ArtistDetailView(artistID: artist.id)
                 case .album(let album): AlbumDetailView(albumID: album.id)
                 }
             }
-                .navigationDestination(for: AppRoute.self) { route in
-                    switch route {
-                    case .playlist(let id): PlaylistDetailView(playlistID: id)
-                    case .album(let id): AlbumDetailView(albumID: id)
-                    case .artist(let id): ArtistDetailView(artistID: id)
-                    case .mv(let id): MVDetailView(mvID: id)
-                    case .dailySongs: DailySongsView()
-                    case .recents: RecentPlaysView()
-                    case .cloud: CloudMusicView()
-                    case .settings: PlaybackSettingsView()
-                    }
+            .navigationDestination(for: AppRoute.self) { route in
+                switch route {
+                case .playlist(let id): PlaylistDetailView(playlistID: id)
+                case .album(let id): AlbumDetailView(albumID: id)
+                case .artist(let id): ArtistDetailView(artistID: id)
+                case .mv(let id): MVDetailView(mvID: id)
+                case .dailySongs: DailySongsView()
+                case .recents: RecentPlaysView()
+                case .cloud: CloudMusicView()
+                case .settings: PlaybackSettingsView()
                 }
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Color.black)
+        .fullScreenCover(isPresented: $isDetailPlayerPresented) {
+            NowPlayingView {
+                isDetailPlayerPresented = false
+            }
         }
         .environment(\.openNowPlaying, {
-            selectedDetail = nil
+            isDetailPlayerPresented = true
         })
+        .onExitCommand {
+            if detailPath.isEmpty {
+                selectedDetail = nil
+            } else {
+                detailPath.removeLast()
+            }
+        }
+    }
+
+    private func detailCoverDidDismiss() {
+        isDetailPlayerPresented = false
+        detailPath = NavigationPath()
+        restoreDetailFocus()
     }
 
     private func restoreDetailFocus() {
@@ -781,7 +810,6 @@ struct NowPlayingView: View {
             requestControlFocus(focus)
         }
     }
-
 }
 
 private struct NowPlayingSyncedLyrics: View {
