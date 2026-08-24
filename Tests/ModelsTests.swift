@@ -166,3 +166,22 @@ func deduplicatesPlaybackQueue() {
 
     #expect(PlaybackQueuePolicy.deduplicated([first, duplicate, second]).map(\.name) == ["第一首", "第二首"])
 }
+
+@Test("MV 模型兼容推荐、详情与播放地址字段")
+func decodesMVShapes() throws {
+    let summaryData = Data(#"{"id":77,"name":"现场 MV","picUrl":"http://example.com/mv.jpg","artistId":9,"artistName":"歌手","duration":245000,"playCount":"12345","brs":{"480":1,"1080":1}}"#.utf8)
+    let urlData = Data(#"{"id":77,"url":"http://example.com/video.mp4","r":1080,"size":1024,"code":200,"expi":1200}"#.utf8)
+
+    let summary = try JSONDecoder().decode(MVSummary.self, from: summaryData)
+    let stream = try JSONDecoder().decode(MVURLData.self, from: urlData)
+
+    #expect(summary.name == "现场 MV")
+    #expect(summary.artistNames == "歌手")
+    #expect(summary.duration == 245)
+    #expect(summary.playCount == 12_345)
+    #expect(summary.availableResolutions == [1_080, 480])
+    #expect(summary.artworkURL?.absoluteString.contains("param=960y540") == true)
+    #expect(stream.streamURL?.scheme == "https")
+    #expect(stream.resolution == 1_080)
+    #expect(stream.expiresIn == 1_200)
+}

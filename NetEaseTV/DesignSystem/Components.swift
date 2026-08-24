@@ -158,6 +158,51 @@ struct ArtistCard: View {
     }
 }
 
+struct MVCard: View {
+    let mv: MVSummary
+    var width: CGFloat = 360
+
+    private var height: CGFloat { width * 9 / 16 }
+
+    var body: some View {
+        NavigationLink(value: AppRoute.mv(mv.id)) {
+            VStack(alignment: .leading, spacing: 12) {
+                ZStack {
+                    ArtworkView(url: mv.artworkURL, cornerRadius: 18, symbol: "play.rectangle.fill")
+                        .frame(width: width, height: height)
+                    Circle()
+                        .fill(.black.opacity(0.56))
+                        .frame(width: 58, height: 58)
+                    Image(systemName: "play.fill")
+                        .font(.system(size: 24, weight: .bold))
+                        .offset(x: 2)
+                }
+                Text(mv.name)
+                    .font(.headline)
+                    .lineLimit(1)
+                HStack(spacing: 8) {
+                    if !mv.artistNames.isEmpty {
+                        Text(mv.artistNames)
+                            .lineLimit(1)
+                    }
+                    Spacer(minLength: 8)
+                    if mv.playCount > 0 {
+                        Label(DisplayFormatter.playCount(mv.playCount), systemImage: "play.fill")
+                    }
+                    if mv.durationMS > 0 {
+                        Text(DisplayFormatter.duration(mv.duration))
+                            .monospacedDigit()
+                    }
+                }
+                .font(.caption)
+                .opacity(0.62)
+            }
+            .frame(width: width, alignment: .leading)
+        }
+        .buttonStyle(TVCardButtonStyle(cornerRadius: 22))
+    }
+}
+
 struct TrackCard: View {
     @Environment(\.openNowPlaying) private var openNowPlaying
     @Environment(AccountStore.self) private var account
@@ -386,6 +431,7 @@ enum AppRoute: Hashable {
     case playlist(Int)
     case album(Int)
     case artist(Int)
+    case mv(Int)
     case dailySongs
     case recents
     case cloud

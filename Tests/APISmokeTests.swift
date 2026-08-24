@@ -38,4 +38,14 @@ func liveAPISmokeTest() async throws {
     let artists = try await NeteaseAPI.topArtists(limit: 1)
     let artist = try #require(artists.first)
     #expect(try await !NeteaseAPI.artist(id: artist.id).hotSongs.isEmpty)
+    _ = try await NeteaseAPI.artistMVs(id: artist.id, limit: 1)
+
+    let mvs = try await NeteaseAPI.personalizedMVs(limit: 1)
+    let mv = try #require(mvs.first)
+    let mvDetail = try await NeteaseAPI.mvDetail(id: mv.id)
+    #expect(!mvDetail.name.isEmpty)
+    let mvStream = try await NeteaseAPI.mvURL(id: mv.id, resolution: 720)
+    #expect(mvStream.id == mv.id)
+    #expect(mvStream.streamURL != nil)
+    #expect(try await NeteaseAPI.search(mv.name, type: .mvs, limit: 1).mvs != nil)
 }

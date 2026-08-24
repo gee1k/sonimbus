@@ -49,7 +49,7 @@ struct SearchView: View {
     var body: some View {
         VStack(spacing: 28) {
             VStack(spacing: 20) {
-                TextField("搜索歌曲、歌单、专辑或歌手", text: $session.query)
+                TextField("搜索歌曲、歌单、专辑、歌手或 MV", text: $session.query)
                     .font(.title2)
                     .onSubmit { Task { await search() } }
                 Picker("类型", selection: $session.scope) {
@@ -57,6 +57,7 @@ struct SearchView: View {
                     Text("歌单").tag(NeteaseAPI.SearchType.playlists)
                     Text("专辑").tag(NeteaseAPI.SearchType.albums)
                     Text("歌手").tag(NeteaseAPI.SearchType.artists)
+                    Text("MV").tag(NeteaseAPI.SearchType.mvs)
                 }
                 .pickerStyle(.segmented)
                 .onChange(of: scope) { _, _ in
@@ -123,12 +124,17 @@ struct SearchView: View {
             cardGrid(items: result.albums ?? [], hasMore: hasMore(result)) { AlbumCard(album: $0) }
         case .artists:
             cardGrid(items: result.artists ?? [], hasMore: hasMore(result)) { ArtistCard(artist: $0) }
+        case .mvs:
+            cardGrid(items: result.mvs ?? [], hasMore: hasMore(result), columnCount: 4) {
+                MVCard(mv: $0, width: 350)
+            }
         }
     }
 
     private func cardGrid<Item: Identifiable, Card: View>(
         items: [Item],
         hasMore: Bool,
+        columnCount: Int = 5,
         @ViewBuilder card: @escaping (Item) -> Card
     ) -> some View where Item.ID == Int {
         Group {
@@ -138,7 +144,13 @@ struct SearchView: View {
                 ScrollViewReader { proxy in
                     ScrollView {
                         VStack(spacing: 36) {
-                            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 34), count: 5), spacing: 42) {
+                            LazyVGrid(
+                                columns: Array(
+                                    repeating: GridItem(.flexible(), spacing: 34),
+                                    count: columnCount
+                                ),
+                                spacing: 42
+                            ) {
                                 ForEach(items) { item in
                                     card(item)
                                         .id(item.id)
@@ -195,7 +207,7 @@ struct SearchView: View {
                     LinearGradient(colors: [TVTheme.accent, TVTheme.magenta], startPoint: .top, endPoint: .bottom)
                 )
             Text("想听什么？").font(.system(size: 42, weight: .bold, design: .rounded))
-            Text("输入歌名、歌手、专辑或歌单名称，然后按下遥控器确认键。")
+            Text("输入歌名、歌手、专辑、歌单或 MV 名称，然后按下遥控器确认键。")
                 .font(.title3)
                 .foregroundStyle(TVTheme.secondaryText)
             if let suggestedQuery, !suggestedQuery.isEmpty {
@@ -263,7 +275,7 @@ struct SearchView: View {
     @MainActor
     private func restoreNavigationFocus() async {
         let routeID: Int? = switch focusRestorationRoute {
-        case .playlist(let id), .album(let id), .artist(let id): id
+        case .playlist(let id), .album(let id), .artist(let id), .mv(let id): id
         default: nil
         }
         guard let id = routeID ?? lastFocusedResultID else { return }
@@ -352,6 +364,7 @@ struct SearchView: View {
         case .playlists: value.playlists?.count ?? 0
         case .albums: value.albums?.count ?? 0
         case .artists: value.artists?.count ?? 0
+        case .mvs: value.mvs?.count ?? 0
         }
     }
 
@@ -361,6 +374,7 @@ struct SearchView: View {
         case .playlists: value.playlistCount
         case .albums: value.albumCount
         case .artists: value.artistCount
+        case .mvs: value.mvCount
         }
     }
 
@@ -381,6 +395,9 @@ struct SearchView: View {
         case .artists:
             let existing = Set((current.artists ?? []).map(\.id))
             return next.artists?.first(where: { !existing.contains($0.id) })?.id
+        case .mvs:
+            let existing = Set((current.mvs ?? []).map(\.id))
+            return next.mvs?.first(where: { !existing.contains($0.id) })?.id
         }
     }
 
@@ -393,10 +410,12 @@ struct SearchView: View {
             albums: unique((current.albums ?? []) + (next.albums ?? [])),
             artists: unique((current.artists ?? []) + (next.artists ?? [])),
             playlists: unique((current.playlists ?? []) + (next.playlists ?? [])),
+            mvs: unique((current.mvs ?? []) + (next.mvs ?? [])),
             songCount: next.songCount ?? current.songCount,
             albumCount: next.albumCount ?? current.albumCount,
             artistCount: next.artistCount ?? current.artistCount,
-            playlistCount: next.playlistCount ?? current.playlistCount
+            playlistCount: next.playlistCount ?? current.playlistCount,
+            mvCount: next.mvCount ?? current.mvCount
         )
     }
 

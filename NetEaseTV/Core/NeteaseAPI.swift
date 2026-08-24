@@ -183,6 +183,13 @@ enum NeteaseAPI {
         ).list.artists
     }
 
+    private struct PersonalizedMVResponse: Decodable { let result: [MVSummary]? }
+
+    static func personalizedMVs(limit: Int = 12) async throws -> [MVSummary] {
+        let result = try await weapi(PersonalizedMVResponse.self, "/personalized/mv").result ?? []
+        return Array(result.prefix(max(0, limit)))
+    }
+
     struct PlaylistCreateResponse: Decodable {
         let code: Int
         let id: Int?
@@ -337,6 +344,25 @@ enum NeteaseAPI {
         try await weapi(SimilarArtistsResponse.self, "/discovery/simiArtist", ["artistid": id]).artists
     }
 
+    struct ArtistMVResponse: Decodable {
+        let mvs: [MVSummary]
+        let hasMore: Bool?
+    }
+
+    static func artistMVs(id: Int, limit: Int = 24, offset: Int = 0) async throws -> ArtistMVResponse {
+        try await weapi(
+            ArtistMVResponse.self,
+            "/artist/mvs",
+            ["artistId": id, "limit": limit, "offset": offset, "total": true]
+        )
+    }
+
+    private struct MVDetailResponse: Decodable { let data: MVSummary }
+
+    static func mvDetail(id: Int) async throws -> MVSummary {
+        try await weapi(MVDetailResponse.self, "/v1/mv/detail", ["id": id]).data
+    }
+
     // MARK: Playback
 
     private struct SongURLResponse: Decodable { let data: [SongURLData] }
@@ -356,6 +382,16 @@ enum NeteaseAPI {
             "/song/lyric",
             ["id": id, "lv": -1, "kv": -1, "tv": -1, "rv": -1]
         )
+    }
+
+    private struct MVURLResponse: Decodable { let data: MVURLData }
+
+    static func mvURL(id: Int, resolution: Int = 1_080) async throws -> MVURLData {
+        try await weapi(
+            MVURLResponse.self,
+            "/song/enhance/play/mv/url",
+            ["id": id, "r": resolution]
+        ).data
     }
 
     private struct FMResponse: Decodable { let data: [Track]? }
@@ -394,6 +430,7 @@ enum NeteaseAPI {
         case albums = 10
         case artists = 100
         case playlists = 1_000
+        case mvs = 1_004
     }
 
     struct SearchResult: Decodable {
@@ -401,10 +438,12 @@ enum NeteaseAPI {
         let albums: [AlbumSummary]?
         let artists: [ArtistSummary]?
         let playlists: [PlaylistSummary]?
+        let mvs: [MVSummary]?
         let songCount: Int?
         let albumCount: Int?
         let artistCount: Int?
         let playlistCount: Int?
+        let mvCount: Int?
     }
 
     private struct SearchResponse: Decodable { let result: SearchResult? }
@@ -425,10 +464,12 @@ enum NeteaseAPI {
             albums: nil,
             artists: nil,
             playlists: nil,
+            mvs: nil,
             songCount: nil,
             albumCount: nil,
             artistCount: nil,
-            playlistCount: nil
+            playlistCount: nil,
+            mvCount: nil
         )
     }
 

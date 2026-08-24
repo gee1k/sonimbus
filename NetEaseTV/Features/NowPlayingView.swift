@@ -1020,6 +1020,7 @@ struct NowPlayingView: View {
                     case .playlist(let id): PlaylistDetailView(playlistID: id)
                     case .album(let id): AlbumDetailView(albumID: id)
                     case .artist(let id): ArtistDetailView(artistID: id)
+                    case .mv(let id): MVDetailView(mvID: id)
                     case .dailySongs: DailySongsView()
                     case .recents: RecentPlaysView()
                     case .cloud: CloudMusicView()

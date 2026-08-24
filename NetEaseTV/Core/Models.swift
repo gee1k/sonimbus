@@ -414,6 +414,79 @@ struct ArtistSummary: Decodable, Hashable, Identifiable {
     }
 }
 
+struct MVSummary: Decodable, Hashable, Identifiable {
+    let id: Int
+    let name: String
+    let cover: String?
+    let artists: [ArtistRef]
+    let durationMS: Int
+    let playCount: Int
+    let briefDesc: String?
+    let description: String?
+    let publishTime: String?
+    let bitrates: [String: Int]
+
+    var artistNames: String { artists.map(\.name).joined(separator: " / ") }
+    var duration: TimeInterval { TimeInterval(durationMS) / 1_000 }
+    var artworkURL: URL? { cover.flatMap { ArtworkURL.make($0, width: 960, height: 540) } }
+    var availableResolutions: [Int] {
+        bitrates.keys.compactMap(Int.init).sorted(by: >)
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, name, cover, picUrl, imgurl, imgurl16v9, coverUrl
+        case artists, artistId, artistName, duration, playCount
+        case briefDesc, desc, publishTime, brs
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(Int.self, forKey: .id)
+        name = (try? container.decode(String.self, forKey: .name)) ?? "未命名 MV"
+        cover = (try? container.decode(String.self, forKey: .cover))
+            ?? (try? container.decode(String.self, forKey: .picUrl))
+            ?? (try? container.decode(String.self, forKey: .imgurl16v9))
+            ?? (try? container.decode(String.self, forKey: .imgurl))
+            ?? (try? container.decode(String.self, forKey: .coverUrl))
+        let decodedArtists = (try? container.decode([ArtistRef].self, forKey: .artists)) ?? []
+        if decodedArtists.isEmpty,
+           let artistName = try? container.decode(String.self, forKey: .artistName) {
+            let artistID = (try? container.decode(Int.self, forKey: .artistId)) ?? 0
+            artists = [ArtistRef(id: artistID, name: artistName)]
+        } else {
+            artists = decodedArtists
+        }
+        durationMS = (try? container.decode(Int.self, forKey: .duration)) ?? 0
+        playCount = (try? container.decode(Int.self, forKey: .playCount))
+            ?? (try? container.decode(String.self, forKey: .playCount)).flatMap(Int.init)
+            ?? 0
+        briefDesc = try? container.decode(String.self, forKey: .briefDesc)
+        description = try? container.decode(String.self, forKey: .desc)
+        publishTime = try? container.decode(String.self, forKey: .publishTime)
+        bitrates = (try? container.decode([String: Int].self, forKey: .brs)) ?? [:]
+    }
+}
+
+struct MVURLData: Decodable, Hashable {
+    let id: Int
+    let url: String?
+    let resolution: Int?
+    let size: Int64?
+    let code: Int?
+    let expiresIn: Int?
+
+    var streamURL: URL? {
+        guard let url, !url.isEmpty else { return nil }
+        return URL(string: url.replacingOccurrences(of: "http://", with: "https://"))
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, url, size, code
+        case resolution = "r"
+        case expiresIn = "expi"
+    }
+}
+
 struct ToplistItem: Decodable, Hashable, Identifiable {
     let id: Int
     let name: String
@@ -525,10 +598,14 @@ struct CloudSongItem: Decodable, Hashable, Identifiable {
 
 enum ArtworkURL {
     static func make(_ raw: String, size: Int) -> URL? {
+        make(raw, width: size, height: size)
+    }
+
+    static func make(_ raw: String, width: Int, height: Int) -> URL? {
         guard !raw.isEmpty else { return nil }
         let secure = raw.replacingOccurrences(of: "http://", with: "https://")
         let separator = secure.contains("?") ? "&" : "?"
-        return URL(string: "\(secure)\(separator)param=\(size)y\(size)")
+        return URL(string: "\(secure)\(separator)param=\(width)y\(height)")
     }
 }
 

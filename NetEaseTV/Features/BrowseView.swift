@@ -6,6 +6,7 @@ final class BrowseSession {
     var charts: [ToplistItem] = []
     var albums: [AlbumSummary] = []
     var artists: [ArtistSummary] = []
+    var mvs: [MVSummary] = []
     var category = "全部"
     var order = "hot"
 }
@@ -45,6 +46,11 @@ struct BrowseView: View {
         nonmutating set { session.artists = newValue }
     }
 
+    private var mvs: [MVSummary] {
+        get { session.mvs }
+        nonmutating set { session.mvs = newValue }
+    }
+
     private var category: String {
         get { session.category }
         nonmutating set { session.category = newValue }
@@ -62,7 +68,7 @@ struct BrowseView: View {
                 VStack(alignment: .leading, spacing: 8) {
                     Text("探索音乐世界")
                         .font(.system(size: 48, weight: .bold, design: .rounded))
-                    Text("编辑精选、排行榜与最新发行")
+                    Text("编辑精选、音乐视频、排行榜与最新发行")
                         .font(.title3)
                         .foregroundStyle(TVTheme.secondaryText)
                     HStack(spacing: 18) {
@@ -109,6 +115,19 @@ struct BrowseView: View {
                                 .id(AppRoute.playlist(chart.id))
                                 .simultaneousGesture(TapGesture().onEnded {
                                     lastFocusedRoute = .playlist(chart.id)
+                                })
+                        }
+                    }
+                }
+
+                if !mvs.isEmpty {
+                    HorizontalShelf(title: "音乐视频", subtitle: "为大屏精选的网易云 MV") {
+                        ForEach(mvs) { mv in
+                            MVCard(mv: mv)
+                                .focused($focusedRoute, equals: .mv(mv.id))
+                                .id(AppRoute.mv(mv.id))
+                                .simultaneousGesture(TapGesture().onEnded {
+                                    lastFocusedRoute = .mv(mv.id)
                                 })
                         }
                     }
@@ -190,6 +209,7 @@ struct BrowseView: View {
         let cachedCharts = charts
         let cachedAlbums = albums
         let cachedArtists = artists
+        let cachedMVs = mvs
         isLoading = true
         errorMessage = nil
         async let playlistRequest = try? NeteaseAPI.topPlaylists(
@@ -200,10 +220,12 @@ struct BrowseView: View {
         async let chartRequest = cachedCharts.isEmpty ? try? NeteaseAPI.toplists() : cachedCharts
         async let albumRequest = cachedAlbums.isEmpty ? try? NeteaseAPI.newAlbums() : cachedAlbums
         async let artistRequest = cachedArtists.isEmpty ? try? NeteaseAPI.topArtists() : cachedArtists
+        async let mvRequest = cachedMVs.isEmpty ? try? NeteaseAPI.personalizedMVs() : cachedMVs
         let playlistResult = await playlistRequest ?? []
         let chartResult = await chartRequest ?? []
         let albumResult = await albumRequest ?? []
         let artistResult = await artistRequest ?? []
+        let mvResult = await mvRequest ?? []
         let categoryResult = await categoryRequest ?? []
         guard generation == loadGeneration,
               !Task.isCancelled,
@@ -213,12 +235,13 @@ struct BrowseView: View {
         charts = chartResult
         albums = albumResult
         artists = artistResult
+        mvs = mvResult
         if !categoryResult.isEmpty {
             var seen = Set<String>()
             categories = (["全部"] + categoryResult.map(\.name))
                 .filter { seen.insert($0).inserted }
         }
-        if playlists.isEmpty && charts.isEmpty && albums.isEmpty && artists.isEmpty {
+        if playlists.isEmpty && charts.isEmpty && albums.isEmpty && artists.isEmpty && mvs.isEmpty {
             errorMessage = "没有收到内容，请稍后重试"
         }
         isLoading = false

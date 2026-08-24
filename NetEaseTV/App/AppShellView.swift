@@ -4,6 +4,10 @@ private struct OpenNowPlayingKey: EnvironmentKey {
     static let defaultValue: (() -> Void)? = nil
 }
 
+private struct HandlesNavigationExitKey: EnvironmentKey {
+    static let defaultValue = false
+}
+
 private struct NavigationFocusRestorationKey: EnvironmentKey {
     static let defaultValue = 0
 }
@@ -16,6 +20,11 @@ extension EnvironmentValues {
     var openNowPlaying: (() -> Void)? {
         get { self[OpenNowPlayingKey.self] }
         set { self[OpenNowPlayingKey.self] = newValue }
+    }
+
+    var handlesNavigationExit: Bool {
+        get { self[HandlesNavigationExitKey.self] }
+        set { self[HandlesNavigationExitKey.self] = newValue }
     }
 
     var navigationFocusRestorationGeneration: Int {
@@ -111,6 +120,7 @@ struct AppShellView: View {
         .animation(reduceMotion ? nil : .easeOut(duration: 0.2), value: toast.current)
         .animation(reduceMotion ? nil : .easeOut(duration: 0.22), value: isNowPlayingPresented)
         .onChange(of: selectedTab) { oldTab, newTab in
+            if oldTab != newTab { stopMVIfNeeded(in: oldTab) }
             if newTab == .nowPlaying {
                 if oldTab != .nowPlaying { lastContentTab = oldTab }
                 isNowPlayingPresented = true
@@ -138,6 +148,20 @@ struct AppShellView: View {
         case .search: searchPath.count
         case .library: libraryPath.count
         case .nowPlaying: 0
+        }
+    }
+
+    private func stopMVIfNeeded(in tab: RootTab) {
+        let route: AppRoute?
+        switch tab {
+        case .listenNow: route = listenNowPath.last
+        case .browse: route = browsePath.last
+        case .search: route = searchPath.last
+        case .library: route = libraryPath.last
+        case .nowPlaying: route = nil
+        }
+        if case .mv(let id) = route {
+            MVPlaybackController.shared.stop(mvID: id)
         }
     }
 
@@ -198,7 +222,12 @@ struct AppShellView: View {
         case .nowPlaying:
             break
         }
-        if didPop { navigationFocusRestorationGeneration &+= 1 }
+        if didPop {
+            if case .mv(let id) = navigationFocusRestorationRoute {
+                MVPlaybackController.shared.stop(mvID: id)
+            }
+            navigationFocusRestorationGeneration &+= 1
+        }
     }
 
     private func tabNavigation<Content: View>(
@@ -213,6 +242,7 @@ struct AppShellView: View {
                         case .playlist(let id): PlaylistDetailView(playlistID: id)
                         case .album(let id): AlbumDetailView(albumID: id)
                         case .artist(let id): ArtistDetailView(artistID: id)
+                        case .mv(let id): MVDetailView(mvID: id)
                         case .dailySongs: DailySongsView()
                         case .recents: RecentPlaysView()
                         case .cloud: CloudMusicView()
@@ -221,6 +251,7 @@ struct AppShellView: View {
                     }
                 }
         }
+        .environment(\.handlesNavigationExit, true)
     }
 }
 
