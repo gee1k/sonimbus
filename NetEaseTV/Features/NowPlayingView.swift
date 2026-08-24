@@ -359,70 +359,19 @@ struct NowPlayingView: View {
     }
 
     private func moreActionsMenu(for track: Track) -> some View {
-        Menu {
-            Button(account.isLiked(track) ? "取消喜欢" : "喜欢") {
-                Task { await account.toggleLike(track) }
-            }
-
-            if !account.ownedPlaylists.isEmpty {
-                Menu("添加到歌单") {
-                    ForEach(account.ownedPlaylists) { playlist in
-                        Button(playlist.name) {
-                            Task { await account.add(track, to: playlist) }
-                        }
-                    }
-                }
-            }
-
-            if let playlistID = player.source.playlistID,
-               playlistID == account.likedSongsPlaylist?.id,
-               !track.noCopyright {
-                Button("从这首开启心动模式") {
-                    player.startIntelligence(from: track, playlistID: playlistID)
-                }
-            }
-
-            if navigableAlbum != nil || !navigableArtists.isEmpty {
-                Divider()
-            }
-
-            if let album = navigableAlbum {
-                Button("查看专辑《\(album.name)》") {
-                    lastSelectedDetailFocus = .moreActions
-                    selectedDetail = .album(album)
-                }
-            }
-
-            if navigableArtists.count == 1, let artist = navigableArtists.first {
-                Button("查看歌手“\(artist.name)”") {
-                    lastSelectedDetailFocus = .moreActions
-                    selectedDetail = .artist(artist)
-                }
-            } else if navigableArtists.count > 1 {
-                Menu("查看歌手") {
-                    ForEach(navigableArtists) { artist in
-                        Button(artist.name) {
-                            lastSelectedDetailFocus = .moreActions
-                            selectedDetail = .artist(artist)
-                        }
-                    }
-                }
-            }
-
-            if let playlistID = player.source.playlistID,
-               let playlist = account.ownedPlaylists.first(where: { $0.id == playlistID }) {
-                Divider()
-                Button("从《\(playlist.name)》中移除", role: .destructive) {
-                    Task { await account.remove(track, from: playlist) }
-                }
-            }
-        } label: {
-            Image(systemName: "ellipsis")
-        }
-        .buttonStyle(TVPlaybackButtonStyle(size: 54))
-        .focused($focusedControl, equals: .moreActions)
-        .disabled(!controlsReady)
-        .accessibilityLabel("更多操作")
+        NowPlayingMoreActionsMenu(
+            track: track,
+            isLiked: account.isLiked(track),
+            ownedPlaylists: account.ownedPlaylists,
+            likedSongsPlaylistID: account.likedSongsPlaylist?.id,
+            sourcePlaylistID: player.source.playlistID,
+            album: navigableAlbum,
+            artists: navigableArtists,
+            controlsReady: controlsReady,
+            focus: $focusedControl,
+            selectedDetail: $selectedDetail,
+            lastSelectedDetailFocus: $lastSelectedDetailFocus
+        )
     }
 
     private var lyricsPanel: some View {
@@ -437,73 +386,10 @@ struct NowPlayingView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .foregroundStyle(.white.opacity(0.76))
             } else if let lines = player.lyrics?.lines, !lines.isEmpty {
-                ScrollViewReader { proxy in
-                    ScrollView(showsIndicators: false) {
-                        LazyVStack(alignment: .leading, spacing: 34) {
-                            Color.clear.frame(height: 210)
-                            ForEach(lines) { line in
-                                let active = line.id == player.activeLyricIndex
-                                VStack(alignment: .leading, spacing: 9) {
-                                    Text(line.text.isEmpty ? "♪" : line.text)
-                                        .font(.system(
-                                            size: active ? 48 : 36,
-                                            weight: active ? .bold : .semibold,
-                                            design: .rounded
-                                        ))
-                                    if player.showsTranslatedLyrics,
-                                       let translation = line.translation, !translation.isEmpty {
-                                        Text(translation)
-                                            .font(.system(size: active ? 25 : 21, weight: .semibold, design: .rounded))
-                                            .foregroundStyle(lyricSecondaryColor(active: active, emphasis: 0.78))
-                                    }
-                                    if player.showsTranslatedLyrics,
-                                       let romaji = line.romaji, !romaji.isEmpty {
-                                        Text(romaji)
-                                            .font(.headline)
-                                            .foregroundStyle(lyricSecondaryColor(active: active, emphasis: 0.54))
-                                    }
-                                }
-                                .padding(.horizontal, 18)
-                                .padding(.vertical, 12)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .foregroundStyle(active ? Color.white : Color.white.opacity(0.30))
-                                .animation(reduceMotion ? nil : .easeOut(duration: 0.24), value: active)
-                                .accessibilityLabel(line.text.isEmpty ? "音乐间奏" : line.text)
-                                .accessibilityValue(DisplayFormatter.duration(line.time))
-                                .id(line.id)
-                            }
-                            Color.clear.frame(height: 230)
-                        }
-                    }
-                    .scrollDisabled(true)
-                    .allowsHitTesting(false)
-                    .mask(
-                        LinearGradient(
-                            stops: [
-                                .init(color: .clear, location: 0),
-                                .init(color: .black, location: 0.17),
-                                .init(color: .black, location: 0.82),
-                                .init(color: .clear, location: 1),
-                            ],
-                            startPoint: .top,
-                            endPoint: .bottom
-                        )
-                    )
-                    .onAppear {
-                        guard let index = player.activeLyricIndex else { return }
-                        proxy.scrollTo(index, anchor: .center)
-                    }
-                    .onChange(of: player.activeLyricIndex) { _, index in
-                        guard let index else { return }
-                        if reduceMotion {
-                            proxy.scrollTo(index, anchor: .center)
-                        } else {
-                            withAnimation(.easeInOut(duration: 0.42)) {
-                                proxy.scrollTo(index, anchor: .center)
-                            }
-                        }
-                    }
-                }
+                NowPlayingSyncedLyrics(
+                    lines: lines,
+                    showsTranslatedLyrics: player.showsTranslatedLyrics
+                )
             } else if player.isLoadingLyrics {
                 VStack(alignment: .leading, spacing: 20) {
                     ProgressView().controlSize(.large)
@@ -674,21 +560,11 @@ struct NowPlayingView: View {
 
     private var playbackChrome: some View {
         VStack(spacing: 5) {
-            TVSeekBar(
-                progress: player.progress,
-                duration: player.duration,
+            NowPlayingTimeline(
                 isEnabled: controlsReady,
                 focus: $focusedControl,
                 onMove: moveTimeline
             )
-
-            HStack {
-                Text(DisplayFormatter.duration(player.progress))
-                Spacer()
-                Text("−" + DisplayFormatter.duration(max(player.duration - player.progress, 0)))
-            }
-            .font(.caption.monospacedDigit())
-            .foregroundStyle(.white.opacity(0.54))
 
             ZStack {
                 HStack {
@@ -823,10 +699,6 @@ struct NowPlayingView: View {
         }
     }
 
-    private func lyricSecondaryColor(active: Bool, emphasis: Double) -> Color {
-        return .white.opacity(active ? emphasis : max(0.24, emphasis * 0.42))
-    }
-
     private var initialControlFocus: NowPlayingFocus {
         guard player.currentTrack != nil else { return .close }
         return .play
@@ -910,6 +782,203 @@ struct NowPlayingView: View {
         }
     }
 
+}
+
+private struct NowPlayingSyncedLyrics: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(PlayerService.self) private var player
+
+    let lines: [LyricLine]
+    let showsTranslatedLyrics: Bool
+
+    var body: some View {
+        let activeLyricIndex = player.activeLyricIndex
+        ScrollViewReader { proxy in
+            ScrollView(showsIndicators: false) {
+                LazyVStack(alignment: .leading, spacing: 34) {
+                    Color.clear.frame(height: 210)
+                    ForEach(lines) { line in
+                        let active = line.id == activeLyricIndex
+                        VStack(alignment: .leading, spacing: 9) {
+                            Text(line.text.isEmpty ? "♪" : line.text)
+                                .font(.system(
+                                    size: active ? 48 : 36,
+                                    weight: active ? .bold : .semibold,
+                                    design: .rounded
+                                ))
+                            if showsTranslatedLyrics,
+                               let translation = line.translation, !translation.isEmpty {
+                                Text(translation)
+                                    .font(.system(size: active ? 25 : 21, weight: .semibold, design: .rounded))
+                                    .foregroundStyle(secondaryColor(active: active, emphasis: 0.78))
+                            }
+                            if showsTranslatedLyrics,
+                               let romaji = line.romaji, !romaji.isEmpty {
+                                Text(romaji)
+                                    .font(.headline)
+                                    .foregroundStyle(secondaryColor(active: active, emphasis: 0.54))
+                            }
+                        }
+                        .padding(.horizontal, 18)
+                        .padding(.vertical, 12)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .foregroundStyle(active ? Color.white : Color.white.opacity(0.30))
+                        .animation(reduceMotion ? nil : .easeOut(duration: 0.24), value: active)
+                        .accessibilityLabel(line.text.isEmpty ? "音乐间奏" : line.text)
+                        .accessibilityValue(DisplayFormatter.duration(line.time))
+                        .id(line.id)
+                    }
+                    Color.clear.frame(height: 230)
+                }
+            }
+            .scrollDisabled(true)
+            .allowsHitTesting(false)
+            .mask(
+                LinearGradient(
+                    stops: [
+                        .init(color: .clear, location: 0),
+                        .init(color: .black, location: 0.17),
+                        .init(color: .black, location: 0.82),
+                        .init(color: .clear, location: 1),
+                    ],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+            )
+            .onAppear {
+                guard let index = player.activeLyricIndex else { return }
+                proxy.scrollTo(index, anchor: .center)
+            }
+            .onChange(of: player.activeLyricIndex) { _, index in
+                guard let index else { return }
+                if reduceMotion {
+                    proxy.scrollTo(index, anchor: .center)
+                } else {
+                    withAnimation(.easeInOut(duration: 0.42)) {
+                        proxy.scrollTo(index, anchor: .center)
+                    }
+                }
+            }
+        }
+    }
+
+    private func secondaryColor(active: Bool, emphasis: Double) -> Color {
+        .white.opacity(active ? emphasis : max(0.24, emphasis * 0.42))
+    }
+}
+
+private struct NowPlayingTimeline: View {
+    @Environment(PlayerService.self) private var player
+
+    let isEnabled: Bool
+    let focus: FocusState<NowPlayingFocus?>.Binding
+    let onMove: (MoveCommandDirection) -> Void
+
+    var body: some View {
+        VStack(spacing: 5) {
+            TVSeekBar(
+                progress: player.progress,
+                duration: player.duration,
+                isEnabled: isEnabled,
+                focus: focus,
+                onMove: onMove
+            )
+
+            HStack {
+                Text(DisplayFormatter.duration(player.progress))
+                Spacer()
+                Text("−" + DisplayFormatter.duration(max(player.duration - player.progress, 0)))
+            }
+            .font(.caption.monospacedDigit())
+            .foregroundStyle(.white.opacity(0.54))
+        }
+    }
+}
+
+private struct NowPlayingMoreActionsMenu: View {
+    @Environment(AccountStore.self) private var account
+    @Environment(PlayerService.self) private var player
+
+    let track: Track
+    let isLiked: Bool
+    let ownedPlaylists: [PlaylistSummary]
+    let likedSongsPlaylistID: Int?
+    let sourcePlaylistID: Int?
+    let album: AlbumRef?
+    let artists: [ArtistRef]
+    let controlsReady: Bool
+    let focus: FocusState<NowPlayingFocus?>.Binding
+    @Binding var selectedDetail: NowPlayingDetailDestination?
+    @Binding var lastSelectedDetailFocus: NowPlayingFocus?
+
+    var body: some View {
+        Menu {
+            Button(isLiked ? "取消喜欢" : "喜欢") {
+                Task { await account.toggleLike(track) }
+            }
+
+            if !ownedPlaylists.isEmpty {
+                Menu("添加到歌单") {
+                    ForEach(ownedPlaylists) { playlist in
+                        Button(playlist.name) {
+                            Task { await account.add(track, to: playlist) }
+                        }
+                    }
+                }
+            }
+
+            if let sourcePlaylistID,
+               sourcePlaylistID == likedSongsPlaylistID,
+               !track.noCopyright {
+                Button("从这首开启心动模式") {
+                    player.startIntelligence(from: track, playlistID: sourcePlaylistID)
+                }
+            }
+
+            if album != nil || !artists.isEmpty {
+                Divider()
+            }
+
+            if let album {
+                Button("查看专辑《\(album.name)》") {
+                    openDetail(.album(album))
+                }
+            }
+
+            if artists.count == 1, let artist = artists.first {
+                Button("查看歌手“\(artist.name)”") {
+                    openDetail(.artist(artist))
+                }
+            } else if artists.count > 1 {
+                Menu("查看歌手") {
+                    ForEach(artists) { artist in
+                        Button(artist.name) {
+                            openDetail(.artist(artist))
+                        }
+                    }
+                }
+            }
+
+            if let sourcePlaylistID,
+               let playlist = ownedPlaylists.first(where: { $0.id == sourcePlaylistID }) {
+                Divider()
+                Button("从《\(playlist.name)》中移除", role: .destructive) {
+                    Task { await account.remove(track, from: playlist) }
+                }
+            }
+        } label: {
+            Image(systemName: "ellipsis")
+        }
+        .buttonStyle(TVPlaybackButtonStyle(size: 54))
+        .focused(focus, equals: .moreActions)
+        .disabled(!controlsReady)
+        .accessibilityLabel("更多操作")
+    }
+
+    private func openDetail(_ destination: NowPlayingDetailDestination) {
+        lastSelectedDetailFocus = .moreActions
+        selectedDetail = destination
+    }
 }
 
 private struct NowPlayingArtistButtonStyle: ButtonStyle {
