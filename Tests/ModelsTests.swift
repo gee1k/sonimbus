@@ -19,8 +19,10 @@ func matchesAlternativeTrackByDuration() {
     #expect(UnblockService.preferredMatchIndex(durationsMS: [], targetDurationMS: 200_000) == nil)
     #expect(UnblockService.streamDurationIsPlausible(269.4, target: 269))
     #expect(!UnblockService.streamDurationIsPlausible(11.31, target: 269))
-    #expect(UnblockService.automaticRetrySources == ["GD 音乐台", "波点音乐", "酷狗音乐"])
+    #expect(UnblockService.automaticRetrySources == ["波点音乐"])
+    #expect(!UnblockService.automaticRetrySources.contains("GD 音乐台"))
     #expect(!UnblockService.automaticRetrySources.contains("酷我音乐"))
+    #expect(!UnblockService.automaticRetrySources.contains("酷狗音乐"))
 }
 
 @Test("歌曲解锁关闭后隐藏不可用歌曲")

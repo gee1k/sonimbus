@@ -736,53 +736,56 @@ struct PlaybackSettingsView: View {
                 .labelsHidden()
             }
 
-            HStack(spacing: 28) {
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("歌词翻译与罗马音")
-                        .font(.title2.bold())
-                    Text("关闭后播放页只保留原文歌词。")
-                        .font(.headline)
-                        .foregroundStyle(TVTheme.secondaryText)
-                }
-                Spacer()
-                TVSwitchButton(
-                    isOn: Binding(
-                        get: { player.showsTranslatedLyrics },
-                        set: { player.setShowsTranslatedLyrics($0) }
-                    )
+            PlaybackSettingsToggle(
+                title: "歌词翻译与罗马音",
+                description: "关闭后播放页只保留原文歌词。",
+                isOn: Binding(
+                    get: { player.showsTranslatedLyrics },
+                    set: { player.setShowsTranslatedLyrics($0) }
                 )
-                .accessibilityLabel("显示歌词翻译与罗马音")
-            }
-            .padding(30)
-            .glassPanel(cornerRadius: 28)
+            )
 
-            HStack(spacing: 28) {
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("歌曲解锁")
-                        .font(.title2.bold())
-                    Text("开启后显示不可用歌曲，播放时自动尝试补全音源。")
-                        .font(.headline)
-                        .foregroundStyle(TVTheme.secondaryText)
-                    Text("顺序：GD 音乐台 → 波点音乐 → 酷狗音乐；关闭后不发起第三方请求。")
-                        .font(.subheadline)
-                        .foregroundStyle(TVTheme.secondaryText)
-                }
-                Spacer()
-                TVSwitchButton(
-                    isOn: Binding(
-                        get: { player.enablesAlternativeSources },
-                        set: { player.setEnablesAlternativeSources($0) }
-                    )
+            PlaybackSettingsToggle(
+                title: "歌曲解锁",
+                description: "开启后显示不可用歌曲，并尝试波点补全；关闭后不访问第三方服务。",
+                isOn: Binding(
+                    get: { player.enablesAlternativeSources },
+                    set: { player.setEnablesAlternativeSources($0) }
                 )
-                .accessibilityLabel("歌曲解锁")
-            }
-            .padding(30)
-            .glassPanel(cornerRadius: 28)
+            )
 
             Spacer()
         }
         .padding(.horizontal, 150)
         .padding(.top, 90)
         .background(TVBackground(tint: .purple))
+    }
+}
+
+private struct PlaybackSettingsToggle: View {
+    let title: String
+    let description: String
+    @Binding var isOn: Bool
+
+    var body: some View {
+        HStack(spacing: 28) {
+            VStack(alignment: .leading, spacing: 8) {
+                Text(title)
+                    .font(.title2.bold())
+                Text(description)
+                    .font(.headline)
+                    .foregroundStyle(TVTheme.secondaryText)
+                    .lineLimit(2)
+            }
+            .layoutPriority(1)
+            Spacer()
+            Toggle(title, isOn: $isOn)
+                .labelsHidden()
+        }
+        .padding(.horizontal, 30)
+        .padding(.vertical, 24)
+        .glassPanel(cornerRadius: 28)
+        .accessibilityElement(children: .combine)
+        .accessibilityValue(isOn ? "已开启" : "已关闭")
     }
 }

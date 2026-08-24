@@ -8,9 +8,7 @@ import Foundation
 /// THIRD_PARTY_NOTICES.md.
 enum UnblockService {
     private enum Source {
-        static let gdMusic = "GD 音乐台"
         static let bodian = "波点音乐"
-        static let kugou = "酷狗音乐"
     }
 
     struct Resolved: Sendable {
@@ -18,28 +16,16 @@ enum UnblockService {
         let source: String
     }
 
-    static let automaticRetrySources = [Source.gdMusic, Source.bodian, Source.kugou]
+    static let automaticRetrySources = [Source.bodian]
 
     static func resolve(
         _ track: Track,
         excludingSources: Set<String> = []
     ) async -> Resolved? {
-        if !excludingSources.contains(Source.gdMusic),
-           let url = await pyncmd(track),
-           await validatesStream(url, for: track) {
-            return Resolved(url: url, source: Source.gdMusic)
-        }
-        guard !Task.isCancelled else { return nil }
         if !excludingSources.contains(Source.bodian),
            let url = await bodian(track),
            await validatesStream(url, for: track) {
             return Resolved(url: url, source: Source.bodian)
-        }
-        guard !Task.isCancelled else { return nil }
-        if !excludingSources.contains(Source.kugou),
-           let url = await kugou(track),
-           await validatesStream(url, for: track) {
-            return Resolved(url: url, source: Source.kugou)
         }
         return nil
     }
@@ -112,21 +98,6 @@ enum UnblockService {
 
     private static func secureURL(_ raw: String) -> URL? {
         URL(string: raw.replacingOccurrences(of: "http://", with: "https://"))
-    }
-
-    // MARK: GD Music API
-
-    private static func pyncmd(_ track: Track) async -> URL? {
-        let endpoint = "https://music-api.gdstudio.xyz/api.php?types=url&source=netease&id=\(track.id)&br=320"
-        guard let data = await get(endpoint),
-              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let rawURL = object["url"] as? String,
-              !rawURL.isEmpty else { return nil }
-        let bitrate = (object["br"] as? NSNumber)?.intValue
-            ?? (object["br"] as? String).flatMap(Int.init)
-            ?? 0
-        guard bitrate > 0 else { return nil }
-        return secureURL(rawURL)
     }
 
     // MARK: Bodian
@@ -207,40 +178,4 @@ enum UnblockService {
         return timestamped + "&sign=\(digest)"
     }
 
-    // MARK: Kugou
-
-    private static func kugou(_ track: Track) async -> URL? {
-        let query = encoded(keyword(for: track))
-        let endpoint = "https://mobilecdn.kugou.com/api/v3/search/song?format=json&keyword=\(query)&page=1&pagesize=10"
-        guard let data = await get(endpoint),
-              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let body = object["data"] as? [String: Any],
-              let rawSongs = body["info"] as? [[String: Any]], !rawSongs.isEmpty else { return nil }
-
-        let songs: [(hash: String, albumID: String, durationMS: Int)] = rawSongs.compactMap { item in
-            guard let hash = item["hash"] as? String, !hash.isEmpty else { return nil }
-            let albumID = (item["album_id"] as? String)
-                ?? (item["album_id"] as? NSNumber).map(\.stringValue)
-                ?? "0"
-            let seconds = (item["duration"] as? NSNumber)?.intValue
-                ?? (item["duration"] as? String).flatMap(Int.init)
-                ?? 0
-            return (hash, albumID, seconds * 1_000)
-        }
-        guard let index = preferredMatchIndex(
-            durationsMS: songs.map(\.durationMS),
-            targetDurationMS: track.durationMS
-        ) else { return nil }
-        let song = songs[index]
-        let key = Insecure.MD5.hash(data: Data("\(song.hash)kgcloudv2".utf8))
-            .map { String(format: "%02x", $0) }
-            .joined()
-        let tracker = "https://trackercdn.kugou.com/i/v2/?key=\(key)&hash=\(song.hash)"
-            + "&appid=1005&pid=2&cmd=25&behavior=play&album_id=\(song.albumID)"
-        guard let data = await get(tracker),
-              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
-        let rawURL = (object["url"] as? [String])?.first ?? (object["url"] as? String)
-        guard let rawURL, !rawURL.isEmpty else { return nil }
-        return secureURL(rawURL)
-    }
 }

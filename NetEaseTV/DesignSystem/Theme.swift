@@ -145,52 +145,6 @@ struct TVPillButtonStyle: ButtonStyle {
     }
 }
 
-struct TVSwitchButton: View {
-    @Binding var isOn: Bool
-
-    var body: some View {
-        Button {
-            isOn.toggle()
-        } label: {
-            HStack(spacing: 9) {
-                Image(systemName: isOn ? "checkmark" : "xmark")
-                Text(isOn ? "开启" : "关闭")
-            }
-        }
-        .buttonStyle(TVSwitchButtonStyle(isOn: isOn))
-        .accessibilityValue(isOn ? "已开启" : "已关闭")
-    }
-}
-
-private struct TVSwitchButtonStyle: ButtonStyle {
-    @Environment(\.isFocused) private var isFocused
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-
-    let isOn: Bool
-
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .font(.headline.weight(.semibold))
-            .frame(width: 142, height: 56)
-            .foregroundStyle(isFocused ? Color.black : Color.white)
-            .background {
-                Capsule()
-                    .fill(isFocused ? Color.white : (isOn ? TVTheme.accent : Color.white.opacity(0.12)))
-            }
-            .overlay {
-                Capsule()
-                    .stroke(
-                        Color.white.opacity(isFocused ? 0.95 : (isOn ? 0.34 : 0.26)),
-                        lineWidth: isFocused ? 3 : 1
-                    )
-            }
-            .scaleEffect(isFocused && !reduceMotion ? 1.07 : (configuration.isPressed ? 0.97 : 1))
-            .shadow(color: .black.opacity(isFocused ? 0.38 : 0.10), radius: isFocused ? 18 : 6, y: isFocused ? 8 : 3)
-            .animation(reduceMotion ? nil : .easeOut(duration: 0.15), value: isFocused)
-            .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: isOn)
-    }
-}
-
 struct TVIconButtonStyle: ButtonStyle {
     @Environment(\.isFocused) private var isFocused
     @Environment(\.isEnabled) private var isEnabled
