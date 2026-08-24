@@ -84,6 +84,23 @@ func decodesRecommendedPlaylistPlayCount() throws {
     #expect(first.replacingTrackCount(with: -1).trackCount == 0)
 }
 
+@Test("歌单列表与详情复用同一封面地址")
+func reusesPlaylistArtworkURLAcrossScreens() throws {
+    let coverURL = "http://example.com/playlist.jpg"
+    let summary = try JSONDecoder().decode(
+        PlaylistSummary.self,
+        from: Data(#"{"id":1,"name":"歌单","coverImgUrl":"http://example.com/playlist.jpg"}"#.utf8)
+    )
+    let detail = try JSONDecoder().decode(
+        PlaylistDetail.self,
+        from: Data(#"{"id":1,"name":"歌单","coverImgUrl":"http://example.com/playlist.jpg","trackCount":0,"playCount":0,"subscribedCount":0,"tracks":[],"trackIds":[]}"#.utf8)
+    )
+
+    #expect(summary.coverImgUrl == coverURL)
+    #expect(summary.artworkURL == detail.artworkURL)
+    #expect(summary.artworkURL?.absoluteString == "https://example.com/playlist.jpg?param=800y800")
+}
+
 @Test("播放音质使用中文标识")
 func formatsAudioQuality() {
     #expect(AudioQuality.displayName(for: "lossless") == "无损")

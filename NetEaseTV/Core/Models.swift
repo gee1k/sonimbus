@@ -353,7 +353,7 @@ struct PlaylistDetail: Decodable, Hashable {
     let tracks: [Track]
     let trackIds: [TrackIDRef]
 
-    var artworkURL: URL? { coverImgUrl.flatMap { ArtworkURL.make($0, size: 1_000) } }
+    var artworkURL: URL? { coverImgUrl.flatMap { ArtworkURL.make($0, size: 800) } }
 }
 
 struct TrackIDRef: Codable, Hashable {

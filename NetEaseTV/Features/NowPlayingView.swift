@@ -50,6 +50,7 @@ struct NowPlayingView: View {
     @State private var acceptsPanelActivation = false
     @State private var controlsReady = false
     @FocusState private var focusedControl: NowPlayingFocus?
+    @FocusState private var focusedQueueID: Int?
 
     init(onClose: @escaping () -> Void) {
         self.onClose = onClose
@@ -100,7 +101,11 @@ struct NowPlayingView: View {
         }
         .onChange(of: player.currentTrack?.id) { oldID, newID in
             if oldID != newID, newID != nil {
-                requestControlFocus(.play)
+                if panel == .queue {
+                    requestQueueFocus(newID)
+                } else {
+                    requestControlFocus(.play)
+                }
             } else if newID == nil {
                 requestControlFocus(.close)
             }
@@ -115,10 +120,12 @@ struct NowPlayingView: View {
         ZStack {
             TVBackground(tint: TVTheme.magenta)
             if let url = player.currentTrack?.artworkURL {
-                AsyncImage(url: url) { image in
-                    image.resizable().scaledToFill()
-                } placeholder: {
-                    Color.clear
+                CachedRemoteImage(url: url) { phase in
+                    if case .success(let image) = phase {
+                        image.resizable().scaledToFill()
+                    } else {
+                        Color.clear
+                    }
                 }
                 .blur(radius: 100)
                 .opacity(0.34)
@@ -585,6 +592,7 @@ struct NowPlayingView: View {
                                         .frame(width: 235, alignment: .leading)
                                     }
                                     .buttonStyle(NowPlayingQueueCardStyle(isCurrent: player.currentTrack?.id == track.id))
+                                    .focused($focusedQueueID, equals: track.id)
                                     .contextMenu {
                                         if player.currentTrack?.id != track.id {
                                             Button("从播放队列移除", role: .destructive) {
@@ -598,7 +606,6 @@ struct NowPlayingView: View {
                             .padding(.horizontal, 34)
                             .padding(.vertical, 42)
                         }
-                        .scrollClipDisabled()
                         .onAppear {
                             guard let currentID = player.currentTrack?.id else { return }
                             proxy.scrollTo(currentID, anchor: .center)
@@ -618,6 +625,7 @@ struct NowPlayingView: View {
             }
         }
         .focusSection()
+        .onAppear { requestQueueFocus() }
     }
 
     private var queueHeader: some View {
@@ -749,6 +757,7 @@ struct NowPlayingView: View {
             switch target {
             case .lyrics:
                 panel = isActive ? nil : .lyrics
+                requestControlFocus(focus)
             case .queue:
                 if isActive {
                     restorePanelAfterQueue()
@@ -757,7 +766,6 @@ struct NowPlayingView: View {
                     panel = .queue
                 }
             }
-            requestControlFocus(focus)
         } label: {
             ZStack(alignment: .bottom) {
                 Image(systemName: symbol)
@@ -788,7 +796,31 @@ struct NowPlayingView: View {
     }
 
     private func requestControlFocus(_ target: NowPlayingFocus) {
+        focusedQueueID = nil
         focusedControl = target
+    }
+
+    private func requestQueueFocus(_ requestedTrackID: Int? = nil) {
+        let currentTrackID = player.currentTrack.flatMap { currentTrack in
+            player.playbackQueue.contains(where: { $0.id == currentTrack.id }) ? currentTrack.id : nil
+        }
+        let target = requestedTrackID
+            .flatMap { requestedID in
+                player.playbackQueue.contains(where: { $0.id == requestedID }) ? requestedID : nil
+            }
+            ?? currentTrackID
+            ?? player.playbackQueue.first?.id
+        guard let target else {
+            requestControlFocus(.queueMode)
+            return
+        }
+
+        Task { @MainActor in
+            await Task.yield()
+            guard panel == .queue else { return }
+            focusedControl = nil
+            focusedQueueID = target
+        }
     }
 
     private func lyricSecondaryColor(active: Bool, emphasis: Double) -> Color {

@@ -16,7 +16,7 @@ struct DailySongsView: View {
                     title: "每日歌曲推荐",
                     subtitle: "为你推荐",
                     description: "根据你的音乐口味生成，每天更新。",
-                    artworkURL: nil,
+                    artworkURL: tracks.first?.artworkURL,
                     metadata: "每天更新 · \(tracks.count) 首歌曲",
                     tracks: tracks,
                     source: .daily

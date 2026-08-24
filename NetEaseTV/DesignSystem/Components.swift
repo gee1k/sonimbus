@@ -1,23 +1,184 @@
+import Foundation
 import SwiftUI
+import UIKit
 
-struct ArtworkView: View {
+private actor RemoteImageRepository {
+    static let shared = RemoteImageRepository()
+
+    private let memoryCache: NSCache<NSURL, NSData>
+    private let responseCache: URLCache
+    private let session: URLSession
+    private var inFlight: [URL: Task<Data, Error>] = [:]
+
+    private init() {
+        let memoryCache = NSCache<NSURL, NSData>()
+        memoryCache.countLimit = 300
+        memoryCache.totalCostLimit = 96 * 1_024 * 1_024
+        self.memoryCache = memoryCache
+
+        let responseCache = URLCache(
+            memoryCapacity: 32 * 1_024 * 1_024,
+            diskCapacity: 512 * 1_024 * 1_024,
+            diskPath: "netease-tv-artwork"
+        )
+        self.responseCache = responseCache
+
+        let configuration = URLSessionConfiguration.default
+        configuration.urlCache = responseCache
+        configuration.requestCachePolicy = .returnCacheDataElseLoad
+        configuration.timeoutIntervalForRequest = 20
+        configuration.timeoutIntervalForResource = 45
+        session = URLSession(configuration: configuration)
+    }
+
+    func data(for url: URL) async throws -> Data {
+        let cacheKey = url as NSURL
+        if let cached = memoryCache.object(forKey: cacheKey) {
+            return cached as Data
+        }
+        if let existing = inFlight[url] {
+            return try await existing.value
+        }
+
+        var request = URLRequest(url: url)
+        request.cachePolicy = .returnCacheDataElseLoad
+        request.timeoutInterval = 20
+        let task = Task<Data, Error> { [responseCache, session] in
+            if let cached = responseCache.cachedResponse(for: request) {
+                return cached.data
+            }
+
+            let (data, response) = try await session.data(for: request)
+            if let httpResponse = response as? HTTPURLResponse,
+               !(200..<300).contains(httpResponse.statusCode) {
+                throw URLError(.badServerResponse)
+            }
+            guard !data.isEmpty else { throw URLError(.zeroByteResource) }
+            responseCache.storeCachedResponse(
+                CachedURLResponse(response: response, data: data, storagePolicy: .allowed),
+                for: request
+            )
+            return data
+        }
+        inFlight[url] = task
+
+        do {
+            let data = try await task.value
+            memoryCache.setObject(data as NSData, forKey: cacheKey, cost: data.count)
+            inFlight[url] = nil
+            return data
+        } catch {
+            inFlight[url] = nil
+            throw error
+        }
+    }
+}
+
+@MainActor
+private final class DecodedRemoteImageCache {
+    static let shared = DecodedRemoteImageCache()
+
+    private let cache: NSCache<NSURL, UIImage>
+
+    private init() {
+        let cache = NSCache<NSURL, UIImage>()
+        cache.countLimit = 80
+        cache.totalCostLimit = 160 * 1_024 * 1_024
+        self.cache = cache
+    }
+
+    func image(for url: URL) -> UIImage? {
+        cache.object(forKey: url as NSURL)
+    }
+
+    func insert(_ image: UIImage, for url: URL) {
+        let pixels = image.size.width * image.scale * image.size.height * image.scale
+        cache.setObject(image, forKey: url as NSURL, cost: max(1, Int(pixels * 4)))
+    }
+}
+
+struct CachedRemoteImage<Content: View>: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
+    let url: URL?
+    let content: (AsyncImagePhase) -> Content
+    @State private var phase: AsyncImagePhase = .empty
+    @State private var loadedURL: URL?
+
+    init(url: URL?, @ViewBuilder content: @escaping (AsyncImagePhase) -> Content) {
+        self.url = url
+        self.content = content
+    }
+
+    var body: some View {
+        content(resolvedPhase)
+            .task(id: url) {
+                await load()
+            }
+    }
+
+    @MainActor
+    private var resolvedPhase: AsyncImagePhase {
+        guard let url else { return .empty }
+        if let image = DecodedRemoteImageCache.shared.image(for: url) {
+            return .success(Image(uiImage: image))
+        }
+        return loadedURL == url ? phase : .empty
+    }
+
+    @MainActor
+    private func load() async {
+        guard let url else {
+            loadedURL = nil
+            phase = .empty
+            return
+        }
+        loadedURL = url
+        if let image = DecodedRemoteImageCache.shared.image(for: url) {
+            phase = .success(Image(uiImage: image))
+            return
+        }
+
+        phase = .empty
+        do {
+            let data = try await RemoteImageRepository.shared.data(for: url)
+            guard !Task.isCancelled else { return }
+            guard let image = UIImage(data: data) else {
+                throw URLError(.cannotDecodeContentData)
+            }
+            DecodedRemoteImageCache.shared.insert(image, for: url)
+            if reduceMotion {
+                phase = .success(Image(uiImage: image))
+            } else {
+                withAnimation(.easeOut(duration: 0.25)) {
+                    phase = .success(Image(uiImage: image))
+                }
+            }
+        } catch is CancellationError {
+            return
+        } catch {
+            phase = .failure(error)
+        }
+    }
+}
+
+struct ArtworkView: View {
     let url: URL?
     var cornerRadius: CGFloat = 20
     var symbol = "music.note"
 
     var body: some View {
         GeometryReader { geometry in
-            AsyncImage(
-                url: url,
-                transaction: Transaction(animation: reduceMotion ? nil : .easeOut(duration: 0.25))
-            ) { phase in
+            CachedRemoteImage(url: url) { phase in
                 switch phase {
                 case .success(let image):
                     image.resizable().scaledToFill()
                 case .empty:
-                    placeholder.overlay { ProgressView().tint(.white.opacity(0.75)) }
+                    placeholder.overlay {
+                        if url != nil {
+                            ProgressView().tint(.white.opacity(0.75))
+                        }
+                    }
                 case .failure:
                     placeholder
                 @unknown default:
