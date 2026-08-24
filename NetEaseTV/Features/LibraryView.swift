@@ -738,14 +738,13 @@ struct PlaybackSettingsView: View {
                         .foregroundStyle(TVTheme.secondaryText)
                 }
                 Spacer()
-                Toggle(
-                    "显示歌词翻译与罗马音",
+                TVSwitchButton(
                     isOn: Binding(
                         get: { player.showsTranslatedLyrics },
                         set: { player.setShowsTranslatedLyrics($0) }
                     )
                 )
-                .labelsHidden()
+                .accessibilityLabel("显示歌词翻译与罗马音")
             }
             .padding(30)
             .glassPanel(cornerRadius: 28)
@@ -759,14 +758,13 @@ struct PlaybackSettingsView: View {
                         .foregroundStyle(TVTheme.secondaryText)
                 }
                 Spacer()
-                Toggle(
-                    "不可用歌曲音源补全",
+                TVSwitchButton(
                     isOn: Binding(
                         get: { player.enablesAlternativeSources },
                         set: { player.setEnablesAlternativeSources($0) }
                     )
                 )
-                .labelsHidden()
+                .accessibilityLabel("不可用歌曲音源补全")
             }
             .padding(30)
             .glassPanel(cornerRadius: 28)
