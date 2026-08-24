@@ -395,6 +395,7 @@ struct MVDetailView: View {
     @State private var isLoading = true
     @State private var errorMessage: String?
     @State private var loadGeneration = 0
+    @State private var showsFullscreenPlayer = false
 
     private var videoPlayer: AVPlayer? {
         mvPlayback.activeMVID == mvID ? mvPlayback.player : nil
@@ -443,6 +444,13 @@ struct MVDetailView: View {
                 mvPlayback.toggle(audioPlayer: audioPlayer)
             }
         )
+        .fullScreenCover(isPresented: $showsFullscreenPlayer) {
+            if let detail {
+                MVFullscreenPlayer(detail: detail) {
+                    showsFullscreenPlayer = false
+                }
+            }
+        }
     }
 
     @ViewBuilder
@@ -514,24 +522,36 @@ struct MVDetailView: View {
             .font(.headline)
             .foregroundStyle(TVTheme.secondaryText)
 
-            Button {
-                if videoPlayer == nil {
-                    mvPlayback.prepare(detail: detail, audioPlayer: audioPlayer)
-                } else {
-                    mvPlayback.toggle(audioPlayer: audioPlayer)
+            HStack(spacing: 14) {
+                Button {
+                    if videoPlayer == nil {
+                        mvPlayback.prepare(detail: detail, audioPlayer: audioPlayer)
+                        showsFullscreenPlayer = true
+                    } else {
+                        mvPlayback.toggle(audioPlayer: audioPlayer)
+                    }
+                } label: {
+                    if mvPlayback.isPreparing {
+                        Label("正在准备", systemImage: "hourglass")
+                    } else {
+                        Label(
+                            videoPlayer == nil ? "播放 MV" : (mvPlayback.isPlaying ? "暂停" : "继续播放"),
+                            systemImage: videoPlayer == nil ? "play.fill" : (mvPlayback.isPlaying ? "pause.fill" : "play.fill")
+                        )
+                    }
                 }
-            } label: {
-                if mvPlayback.isPreparing {
-                    Label("正在准备", systemImage: "hourglass")
-                } else {
-                    Label(
-                        videoPlayer == nil ? "播放 MV" : (mvPlayback.isPlaying ? "暂停" : "继续播放"),
-                        systemImage: videoPlayer == nil ? "play.fill" : (mvPlayback.isPlaying ? "pause.fill" : "play.fill")
-                    )
+                .buttonStyle(TVPillButtonStyle(prominent: true))
+                .disabled(mvPlayback.isPreparing)
+
+                if videoPlayer != nil {
+                    Button {
+                        showsFullscreenPlayer = true
+                    } label: {
+                        Label("全屏", systemImage: "arrow.up.left.and.arrow.down.right")
+                    }
+                    .buttonStyle(TVPillButtonStyle())
                 }
             }
-            .buttonStyle(TVPillButtonStyle(prominent: true))
-            .disabled(mvPlayback.isPreparing)
 
             if let servedResolution = mvPlayback.servedResolution {
                 Label("\(servedResolution)p", systemImage: "tv")
@@ -602,6 +622,116 @@ struct MVDetailView: View {
             .first(where: { !$0.isEmpty })
     }
 
+}
+
+private struct MVFullscreenPlayer: View {
+    private enum Control: Hashable {
+        case playPause
+        case close
+    }
+
+    let detail: MVSummary
+    let onClose: () -> Void
+
+    @Environment(PlayerService.self) private var audioPlayer
+    private let mvPlayback = MVPlaybackController.shared
+    @FocusState private var focusedControl: Control?
+
+    var body: some View {
+        ZStack {
+            Color.black
+                .ignoresSafeArea()
+
+            if let player = mvPlayback.player {
+                InlineMVPlayer(player: player)
+                    .ignoresSafeArea()
+            } else if mvPlayback.isPreparing {
+                VStack(spacing: 18) {
+                    ProgressView()
+                        .controlSize(.large)
+                    Text("正在准备视频")
+                        .font(.title3.bold())
+                }
+                .foregroundStyle(.white)
+            } else if let errorMessage = mvPlayback.errorMessage {
+                VStack(spacing: 16) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(.system(size: 48))
+                        .foregroundStyle(.orange)
+                    Text("暂时无法播放")
+                        .font(.title2.bold())
+                    Text(errorMessage)
+                        .font(.headline)
+                        .foregroundStyle(.white.opacity(0.68))
+                        .multilineTextAlignment(.center)
+                        .frame(maxWidth: 760)
+                }
+            }
+
+            LinearGradient(
+                colors: [.black.opacity(0.24), .clear, .black.opacity(0.72)],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+            .ignoresSafeArea()
+            .allowsHitTesting(false)
+
+            VStack(alignment: .leading, spacing: 0) {
+                HStack {
+                    Text("音乐视频")
+                        .font(.headline.bold())
+                        .foregroundStyle(TVTheme.accent)
+                    Spacer()
+                    if let servedResolution = mvPlayback.servedResolution {
+                        Label("\(servedResolution)p", systemImage: "tv")
+                            .font(.headline.bold())
+                            .foregroundStyle(.white.opacity(0.78))
+                    }
+                }
+
+                Spacer()
+
+                HStack(alignment: .bottom, spacing: 18) {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text(detail.name)
+                            .font(.system(size: 46, weight: .bold, design: .rounded))
+                            .lineLimit(2)
+                        if !detail.artistNames.isEmpty {
+                            Text(detail.artistNames)
+                                .font(.title3)
+                                .foregroundStyle(.white.opacity(0.72))
+                        }
+                    }
+
+                    Spacer()
+
+                    if mvPlayback.player != nil {
+                        Button {
+                            mvPlayback.toggle(audioPlayer: audioPlayer)
+                        } label: {
+                            Image(systemName: mvPlayback.isPlaying ? "pause.fill" : "play.fill")
+                        }
+                        .buttonStyle(TVIconButtonStyle(size: 72, prominent: true))
+                        .focused($focusedControl, equals: .playPause)
+                        .accessibilityLabel(mvPlayback.isPlaying ? "暂停" : "继续播放")
+                    }
+
+                    Button(action: onClose) {
+                        Label("退出全屏", systemImage: "arrow.down.right.and.arrow.up.left")
+                    }
+                    .buttonStyle(TVPillButtonStyle())
+                    .focused($focusedControl, equals: .close)
+                }
+            }
+            .padding(.horizontal, 88)
+            .padding(.vertical, 64)
+        }
+        .onAppear { focusedControl = mvPlayback.player == nil ? .close : .playPause }
+        .onExitCommand(perform: onClose)
+        .onPlayPauseCommand {
+            mvPlayback.toggle(audioPlayer: audioPlayer)
+        }
+    }
 }
 
 private struct MVPlayPauseCommand: ViewModifier {

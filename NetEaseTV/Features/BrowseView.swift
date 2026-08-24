@@ -249,12 +249,16 @@ struct BrowseView: View {
         async let chartRequest = cachedCharts.isEmpty ? try? NeteaseAPI.toplists() : cachedCharts
         async let albumRequest = cachedAlbums.isEmpty ? try? NeteaseAPI.newAlbums() : cachedAlbums
         async let artistRequest = cachedArtists.isEmpty ? try? NeteaseAPI.topArtists() : cachedArtists
-        async let mvRequest = cachedMVs.isEmpty ? try? NeteaseAPI.personalizedMVs() : cachedMVs
+        async let personalizedMVRequest = cachedMVs.isEmpty ? try? NeteaseAPI.personalizedMVs(limit: 12) : cachedMVs
+        async let latestMVRequest = cachedMVs.isEmpty ? try? NeteaseAPI.latestMVs(limit: 24) : []
         let playlistResult = await playlistRequest ?? []
         let chartResult = await chartRequest ?? []
         let albumResult = await albumRequest ?? []
         let artistResult = await artistRequest ?? []
-        let mvResult = await mvRequest ?? []
+        let mvResult = mergedMVs(
+            recommended: await personalizedMVRequest ?? [],
+            latest: await latestMVRequest ?? []
+        )
         let categoryResult = await categoryRequest ?? []
         guard generation == loadGeneration,
               !Task.isCancelled,
@@ -274,6 +278,14 @@ struct BrowseView: View {
             errorMessage = "没有收到内容，请稍后重试"
         }
         isLoading = false
+    }
+
+    private func mergedMVs(recommended: [MVSummary], latest: [MVSummary]) -> [MVSummary] {
+        var seen = Set<Int>()
+        return (recommended + latest)
+            .filter { seen.insert($0.id).inserted }
+            .prefix(24)
+            .map { $0 }
     }
 }
 

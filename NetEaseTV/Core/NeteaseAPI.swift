@@ -190,6 +190,19 @@ enum NeteaseAPI {
         return Array(result.prefix(max(0, limit)))
     }
 
+    private struct LatestMVResponse: Decodable {
+        let data: [MVSummary]?
+        let hasMore: Bool?
+    }
+
+    static func latestMVs(area: String = "", limit: Int = 24) async throws -> [MVSummary] {
+        try await weapi(
+            LatestMVResponse.self,
+            "/mv/first",
+            ["area": area, "limit": limit, "total": true]
+        ).data ?? []
+    }
+
     struct PlaylistCreateResponse: Decodable {
         let code: Int
         let id: Int?

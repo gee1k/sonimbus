@@ -42,6 +42,7 @@ func liveAPISmokeTest() async throws {
 
     let mvs = try await NeteaseAPI.personalizedMVs(limit: 1)
     let mv = try #require(mvs.first)
+    #expect(try await NeteaseAPI.latestMVs(limit: 12).count > 2)
     let mvDetail = try await NeteaseAPI.mvDetail(id: mv.id)
     #expect(!mvDetail.name.isEmpty)
     let mvStream = try await NeteaseAPI.mvURL(id: mv.id, resolution: 720)
