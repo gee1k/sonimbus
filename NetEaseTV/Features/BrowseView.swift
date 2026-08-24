@@ -12,6 +12,14 @@ final class BrowseSession {
 }
 
 struct BrowseView: View {
+    private enum Section: Hashable {
+        case playlists
+        case charts
+        case mvs
+        case albums
+        case artists
+    }
+
     private let fallbackCategories = ["全部", "华语", "欧美", "日语", "韩语", "粤语", "电子", "摇滚", "民谣", "说唱", "古典", "爵士"]
 
     @Bindable var session: BrowseSession
@@ -105,6 +113,7 @@ struct BrowseView: View {
                                 })
                         }
                     }
+                    .id(Section.playlists)
                 }
 
                 if !charts.isEmpty {
@@ -118,6 +127,7 @@ struct BrowseView: View {
                                 })
                         }
                     }
+                    .id(Section.charts)
                 }
 
                 if !mvs.isEmpty {
@@ -131,6 +141,7 @@ struct BrowseView: View {
                                 })
                         }
                     }
+                    .id(Section.mvs)
                 }
 
                 if !albums.isEmpty {
@@ -144,6 +155,7 @@ struct BrowseView: View {
                                 })
                         }
                     }
+                    .id(Section.albums)
                 }
 
                 if !artists.isEmpty {
@@ -157,6 +169,7 @@ struct BrowseView: View {
                                 })
                         }
                     }
+                    .id(Section.artists)
                 }
 
                 if isLoading {
@@ -189,15 +202,31 @@ struct BrowseView: View {
     @MainActor
     private func restoreNavigationFocus(using proxy: ScrollViewProxy) async {
         guard let route = focusRestorationRoute ?? lastFocusedRoute else { return }
+        focusedRoute = nil
         try? await Task.sleep(for: .milliseconds(80))
         guard !Task.isCancelled else { return }
         withAnimation(.easeOut(duration: 0.18)) {
-            proxy.scrollTo(route, anchor: .center)
+            proxy.scrollTo(section(for: route), anchor: .center)
         }
         try? await Task.sleep(for: .milliseconds(140))
         guard !Task.isCancelled else { return }
         lastFocusedRoute = route
         focusedRoute = route
+    }
+
+    private func section(for route: AppRoute) -> Section {
+        switch route {
+        case .playlist(let id):
+            return charts.contains(where: { $0.id == id }) ? .charts : .playlists
+        case .mv:
+            return .mvs
+        case .album:
+            return .albums
+        case .artist:
+            return .artists
+        default:
+            return .playlists
+        }
     }
 
     @MainActor
