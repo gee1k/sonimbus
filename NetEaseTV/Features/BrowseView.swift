@@ -103,7 +103,6 @@ struct BrowseView: View {
                 }
                 .padding(.horizontal, TVTheme.horizontalPadding)
                 .focusSection()
-                .id(Section.top)
 
                 if !playlists.isEmpty {
                     HorizontalShelf(title: "编辑精选") {
@@ -186,6 +185,8 @@ struct BrowseView: View {
                 }
                 .padding(.top, 44)
                 .padding(.bottom, 70)
+                // Include the top padding in the anchor so scrollTo resolves to offset zero.
+                .id(Section.top)
             }
             .background(TVBackground(tint: .blue))
             .task(id: focusRestorationGeneration) {
