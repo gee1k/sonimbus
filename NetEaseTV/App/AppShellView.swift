@@ -76,10 +76,8 @@ struct AppShellView: View {
                 .tabItem { Label("现在就听", systemImage: "play.circle.fill") }
 
                 tabNavigation(path: $browsePath) {
-                    BrowseView(
-                        session: browseSession,
-                        activationGeneration: browseActivationGeneration
-                    )
+                    BrowseView(session: browseSession)
+                        .id(browseActivationGeneration)
                 }
                 .tag(RootTab.browse)
                 .tabItem { Label("浏览", systemImage: "square.grid.2x2.fill") }

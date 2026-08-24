@@ -13,7 +13,6 @@ final class BrowseSession {
 
 struct BrowseView: View {
     private enum Section: Hashable {
-        case top
         case playlists
         case charts
         case mvs
@@ -24,7 +23,6 @@ struct BrowseView: View {
     private let fallbackCategories = ["全部", "华语", "欧美", "日语", "韩语", "粤语", "电子", "摇滚", "民谣", "说唱", "古典", "爵士"]
 
     @Bindable var session: BrowseSession
-    let activationGeneration: Int
 
     @Environment(\.navigationFocusRestorationGeneration) private var focusRestorationGeneration
     @Environment(\.navigationFocusRestorationRoute) private var focusRestorationRoute
@@ -185,31 +183,16 @@ struct BrowseView: View {
                 }
                 .padding(.top, 44)
                 .padding(.bottom, 70)
-                // Include the top padding in the anchor so scrollTo resolves to offset zero.
-                .id(Section.top)
             }
             .background(TVBackground(tint: .blue))
             .task(id: focusRestorationGeneration) {
                 await restoreNavigationFocus(using: proxy)
-            }
-            .task(id: activationGeneration) {
-                await resetForTabActivation(using: proxy)
             }
         }
         .task(id: "\(category)-\(order)") { await load() }
         .onChange(of: focusedRoute) { _, route in
             if let route { lastFocusedRoute = route }
         }
-    }
-
-    @MainActor
-    private func resetForTabActivation(using proxy: ScrollViewProxy) async {
-        guard activationGeneration > 0 else { return }
-        focusedRoute = nil
-        lastFocusedRoute = nil
-        await Task.yield()
-        guard !Task.isCancelled else { return }
-        proxy.scrollTo(Section.top, anchor: .top)
     }
 
     private var availableCategories: [String] {
