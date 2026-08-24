@@ -1,4 +1,5 @@
 import AVFoundation
+import AVKit
 import SwiftUI
 import UIKit
 
@@ -274,35 +275,144 @@ final class MVPlaybackController {
 
     static let shared = MVPlaybackController()
 
+    private static let autoplayDefaultsKey = "mv.autoplay.enabled"
+
     private(set) var activeMVID: Int?
     private(set) var player: AVPlayer?
     private(set) var isPreparing = false
     private(set) var isPlaying = false
     private(set) var errorMessage: String?
     private(set) var servedResolution: Int?
+    private(set) var queue: [MVSummary] = []
+    private(set) var currentDetail: MVSummary?
+    private(set) var currentQueueIndex: Int?
+    private(set) var autoplayEnabled: Bool
 
     private weak var audioPlayer: PlayerService?
     private var requestGeneration = 0
+    private var timeControlObservation: NSKeyValueObservation?
+
+    private init() {
+        let defaults = UserDefaults.standard
+        if defaults.object(forKey: Self.autoplayDefaultsKey) == nil {
+            autoplayEnabled = true
+        } else {
+            autoplayEnabled = defaults.bool(forKey: Self.autoplayDefaultsKey)
+        }
+    }
+
+    var canSkip: Bool { queue.count > 1 && currentQueueIndex != nil }
+
+    var nextSummary: MVSummary? {
+        adjacentSummary(offset: 1)
+    }
+
+    func configureQueue(_ videos: [MVSummary], startingAt mvID: Int) {
+        let uniqueVideos = MVQueuePolicy.deduplicated(videos)
+        guard let index = uniqueVideos.firstIndex(where: { $0.id == mvID }) else { return }
+        queue = uniqueVideos
+        currentQueueIndex = index
+        currentDetail = uniqueVideos[index]
+    }
+
+    func enrichQueue(_ videos: [MVSummary], around detail: MVSummary) {
+        guard queue.count <= 1, activeMVID == detail.id else { return }
+        let uniqueVideos = MVQueuePolicy.deduplicated([detail] + videos)
+        configureQueue(uniqueVideos, startingAt: detail.id)
+        replaceCurrentSummary(with: detail)
+    }
 
     func activate(mvID: Int) {
         guard activeMVID != mvID else { return }
+        if let activeMVID,
+           queue.contains(where: { $0.id == activeMVID }),
+           queue.contains(where: { $0.id == mvID }) {
+            return
+        }
         resetPlayback()
         activeMVID = mvID
+        if let index = queue.firstIndex(where: { $0.id == mvID }) {
+            currentQueueIndex = index
+            currentDetail = queue[index]
+        } else {
+            queue = []
+            currentQueueIndex = nil
+            currentDetail = nil
+        }
     }
 
-    func stop(mvID: Int) {
-        guard activeMVID == mvID else { return }
+    func stop() {
         resetPlayback()
         activeMVID = nil
+        queue = []
+        currentDetail = nil
+        currentQueueIndex = nil
     }
 
     func prepare(detail: MVSummary, audioPlayer: PlayerService) {
-        guard activeMVID == detail.id, !isPreparing else { return }
+        if activeMVID != detail.id { activate(mvID: detail.id) }
+        guard !isPreparing, player == nil else { return }
         self.audioPlayer = audioPlayer
+        if let index = queue.firstIndex(where: { $0.id == detail.id }) {
+            currentQueueIndex = index
+            currentDetail = detail
+            queue[index] = detail
+        } else {
+            configureQueue([detail], startingAt: detail.id)
+        }
+        beginPreparing(detail: detail)
+    }
+
+    func playNext(audioPlayer: PlayerService? = nil) {
+        playAdjacent(offset: 1, audioPlayer: audioPlayer)
+    }
+
+    func playPrevious(audioPlayer: PlayerService? = nil) {
+        if let currentTime = player?.currentTime().seconds,
+           currentTime.isFinite,
+           currentTime > 5 {
+            player?.seek(to: .zero)
+            player?.play()
+            isPlaying = true
+            return
+        }
+        playAdjacent(offset: -1, audioPlayer: audioPlayer)
+    }
+
+    func toggleAutoplay() {
+        autoplayEnabled.toggle()
+        UserDefaults.standard.set(autoplayEnabled, forKey: Self.autoplayDefaultsKey)
+    }
+
+    func toggle(audioPlayer: PlayerService) {
+        guard let player else { return }
+        self.audioPlayer = audioPlayer
+        if player.timeControlStatus == .playing {
+            player.pause()
+            isPlaying = false
+        } else {
+            pauseAudioIfNeeded()
+            player.play()
+            isPlaying = true
+        }
+    }
+
+    func didReachEnd(item: AnyObject?) {
+        guard item === player?.currentItem else { return }
+        if autoplayEnabled, canSkip {
+            playNext()
+        } else {
+            isPlaying = false
+            player?.seek(to: .zero)
+        }
+    }
+
+    private func beginPreparing(detail: MVSummary) {
         requestGeneration &+= 1
         let generation = requestGeneration
         isPreparing = true
         errorMessage = nil
+        servedResolution = nil
 
         var seen = Set<Int>()
         let resolutions = (detail.availableResolutions.filter { $0 <= 1_080 } + [1_080, 720, 480, 240])
@@ -311,27 +421,41 @@ final class MVPlaybackController {
         Task.detached(priority: .userInitiated) {
             let result = await Self.resolveStream(mvID: id, resolutions: resolutions)
             await MainActor.run {
-                Self.shared.apply(result, mvID: id, generation: generation)
+                Self.shared.apply(result, detail: detail, generation: generation)
             }
         }
     }
 
-    func toggle(audioPlayer: PlayerService) {
-        guard let player else { return }
-        self.audioPlayer = audioPlayer
-        if isPlaying {
-            player.pause()
-        } else {
-            pauseAudioIfNeeded()
-            player.play()
-        }
-        isPlaying.toggle()
+    private func playAdjacent(offset: Int, audioPlayer: PlayerService?) {
+        if let audioPlayer { self.audioPlayer = audioPlayer }
+        guard let currentQueueIndex,
+              let nextIndex = MVQueuePolicy.adjacentIndex(
+                from: currentQueueIndex,
+                count: queue.count,
+                offset: offset
+              ) else { return }
+        playQueueItem(at: nextIndex)
     }
 
-    func didReachEnd(item: AnyObject?) {
-        guard item === player?.currentItem else { return }
-        isPlaying = false
-        player?.seek(to: .zero)
+    private func playQueueItem(at index: Int) {
+        guard queue.indices.contains(index) else { return }
+        let summary = queue[index]
+        resetPlayback(clearAudioPlayer: false)
+        activeMVID = summary.id
+        currentQueueIndex = index
+        currentDetail = summary
+        isPreparing = true
+        errorMessage = nil
+        let generation = requestGeneration
+
+        Task { @MainActor [weak self] in
+            let detail = (try? await NeteaseAPI.mvDetail(id: summary.id)) ?? summary
+            guard let self,
+                  requestGeneration == generation,
+                  activeMVID == summary.id else { return }
+            replaceCurrentSummary(with: detail)
+            beginPreparing(detail: detail)
+        }
     }
 
     nonisolated private static func resolveStream(mvID: Int, resolutions: [Int]) async -> StreamResult {
@@ -349,20 +473,63 @@ final class MVPlaybackController {
         return .failure(lastErrorMessage ?? "当前 MV 暂时没有可用的播放地址")
     }
 
-    private func apply(_ result: StreamResult, mvID: Int, generation: Int) {
-        guard activeMVID == mvID, requestGeneration == generation else { return }
+    private func apply(_ result: StreamResult, detail: MVSummary, generation: Int) {
+        guard activeMVID == detail.id, requestGeneration == generation else { return }
         isPreparing = false
         switch result {
         case .success(let url, let resolution):
-            let videoPlayer = AVPlayer(url: url)
+            let item = AVPlayerItem(url: url)
+            item.externalMetadata = Self.externalMetadata(for: detail)
+            let videoPlayer = AVPlayer(playerItem: item)
             pauseAudioIfNeeded()
             player = videoPlayer
             servedResolution = resolution
             isPlaying = true
+            timeControlObservation = videoPlayer.observe(\.timeControlStatus, options: [.initial, .new]) { player, _ in
+                Task { @MainActor in
+                    guard Self.shared.player === player else { return }
+                    Self.shared.isPlaying = player.timeControlStatus == .playing
+                }
+            }
             videoPlayer.play()
         case .failure(let message):
             errorMessage = message
         }
+    }
+
+    private func adjacentSummary(offset: Int) -> MVSummary? {
+        guard let currentQueueIndex,
+              let index = MVQueuePolicy.adjacentIndex(
+                from: currentQueueIndex,
+                count: queue.count,
+                offset: offset
+              ) else { return nil }
+        return queue[index]
+    }
+
+    private func replaceCurrentSummary(with detail: MVSummary) {
+        currentDetail = detail
+        if let currentQueueIndex, queue.indices.contains(currentQueueIndex) {
+            queue[currentQueueIndex] = detail
+        }
+    }
+
+    private static func externalMetadata(for detail: MVSummary) -> [AVMetadataItem] {
+        var metadata: [AVMetadataItem] = []
+        let title = AVMutableMetadataItem()
+        title.identifier = .commonIdentifierTitle
+        title.value = detail.name as NSString
+        title.extendedLanguageTag = "zh-CN"
+        metadata.append(title)
+
+        if !detail.artistNames.isEmpty {
+            let subtitle = AVMutableMetadataItem()
+            subtitle.identifier = .iTunesMetadataTrackSubTitle
+            subtitle.value = detail.artistNames as NSString
+            subtitle.extendedLanguageTag = "zh-CN"
+            metadata.append(subtitle)
+        }
+        return metadata
     }
 
     private func pauseAudioIfNeeded() {
@@ -371,15 +538,17 @@ final class MVPlaybackController {
         }
     }
 
-    private func resetPlayback() {
+    private func resetPlayback(clearAudioPlayer: Bool = true) {
         requestGeneration &+= 1
+        timeControlObservation?.invalidate()
+        timeControlObservation = nil
         player?.pause()
         player = nil
         isPreparing = false
         isPlaying = false
         errorMessage = nil
         servedResolution = nil
-        audioPlayer = nil
+        if clearAudioPlayer { audioPlayer = nil }
     }
 }
 
@@ -398,15 +567,19 @@ struct MVDetailView: View {
     @State private var showsFullscreenPlayer = false
 
     private var videoPlayer: AVPlayer? {
-        mvPlayback.activeMVID == mvID ? mvPlayback.player : nil
+        mvPlayback.player
+    }
+
+    private var displayedDetail: MVSummary? {
+        mvPlayback.currentDetail ?? detail
     }
 
     var body: some View {
         ZStack {
-            if let detail {
+            if let detail = displayedDetail {
                 ScrollView {
                     HStack(alignment: .top, spacing: 44) {
-                        videoStage(detail)
+                        videoStageButton(detail)
                             .frame(width: 1_080, height: 608)
 
                         metadataPanel(detail)
@@ -429,12 +602,12 @@ struct MVDetailView: View {
         .onAppear { mvPlayback.activate(mvID: mvID) }
         .modifier(
             MVExitCommand(isActive: !handlesNavigationExit) {
-                mvPlayback.stop(mvID: mvID)
+                mvPlayback.stop()
                 dismiss()
             }
         )
         .onChange(of: scenePhase) { _, phase in
-            if phase != .active { mvPlayback.stop(mvID: mvID) }
+            if phase != .active { mvPlayback.stop() }
         }
         .onReceive(NotificationCenter.default.publisher(for: .AVPlayerItemDidPlayToEndTime)) { notification in
             mvPlayback.didReachEnd(item: notification.object as AnyObject?)
@@ -445,7 +618,7 @@ struct MVDetailView: View {
             }
         )
         .fullScreenCover(isPresented: $showsFullscreenPlayer) {
-            if let detail {
+            if let detail = displayedDetail {
                 MVFullscreenPlayer(detail: detail) {
                     showsFullscreenPlayer = false
                 }
@@ -454,41 +627,51 @@ struct MVDetailView: View {
     }
 
     @ViewBuilder
-    private func videoStage(_ detail: MVSummary) -> some View {
-        ZStack {
-            if let videoPlayer {
-                InlineMVPlayer(player: videoPlayer)
-                    .background(.black)
-            } else {
-                ArtworkView(url: detail.artworkURL, cornerRadius: 28, symbol: "play.rectangle.fill")
-                    .overlay {
-                        LinearGradient(
-                            colors: [.clear, .black.opacity(0.4)],
-                            startPoint: .top,
-                            endPoint: .bottom
-                        )
-                        .clipShape(RoundedRectangle(cornerRadius: 28, style: .continuous))
+    private func videoStageButton(_ detail: MVSummary) -> some View {
+        Button {
+            openFullscreen(detail)
+        } label: {
+            ZStack(alignment: .bottomTrailing) {
+                ZStack {
+                    if let videoPlayer {
+                        InlineMVPlayer(player: videoPlayer)
+                            .background(.black)
+                    } else {
+                        ArtworkView(url: detail.artworkURL, cornerRadius: 28, symbol: "play.rectangle.fill")
+                            .overlay {
+                                LinearGradient(
+                                    colors: [.clear, .black.opacity(0.4)],
+                                    startPoint: .top,
+                                    endPoint: .bottom
+                                )
+                                .clipShape(RoundedRectangle(cornerRadius: 28, style: .continuous))
+                            }
                     }
-            }
 
-            if mvPlayback.activeMVID == mvID, mvPlayback.isPreparing {
-                VStack(spacing: 16) {
-                    ProgressView()
-                        .controlSize(.large)
-                    Text("正在准备视频")
-                        .font(.headline)
+                    if mvPlayback.isPreparing {
+                        VStack(spacing: 16) {
+                            ProgressView()
+                                .controlSize(.large)
+                            Text("正在准备视频")
+                                .font(.headline)
+                        }
+                        .padding(28)
+                        .glassPanel(cornerRadius: 24)
+                    }
                 }
-                .padding(28)
-                .glassPanel(cornerRadius: 24)
+
+                Label(videoPlayer == nil ? "播放并全屏" : "进入全屏", systemImage: "arrow.up.left.and.arrow.down.right")
+                    .font(.headline.bold())
+                    .padding(.horizontal, 18)
+                    .padding(.vertical, 12)
+                    .glassPanel(cornerRadius: 18)
+                    .padding(22)
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .clipShape(RoundedRectangle(cornerRadius: 28, style: .continuous))
         }
-        .clipShape(RoundedRectangle(cornerRadius: 28, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: 28, style: .continuous)
-                .stroke(.white.opacity(0.12), lineWidth: 1)
-        }
-        .shadow(color: .black.opacity(0.42), radius: 34, y: 18)
-        .accessibilityLabel("\(detail.name) 视频")
+        .buttonStyle(MVVideoStageButtonStyle())
+        .accessibilityLabel(videoPlayer == nil ? "播放 \(detail.name) 并进入全屏" : "全屏播放 \(detail.name)")
     }
 
     private func metadataPanel(_ detail: MVSummary) -> some View {
@@ -525,8 +708,7 @@ struct MVDetailView: View {
             HStack(spacing: 14) {
                 Button {
                     if videoPlayer == nil {
-                        mvPlayback.prepare(detail: detail, audioPlayer: audioPlayer)
-                        showsFullscreenPlayer = true
+                        openFullscreen(detail)
                     } else {
                         mvPlayback.toggle(audioPlayer: audioPlayer)
                     }
@@ -568,7 +750,7 @@ struct MVDetailView: View {
                             }
                             .buttonStyle(TVPillButtonStyle())
                             .simultaneousGesture(TapGesture().onEnded {
-                                mvPlayback.stop(mvID: mvID)
+                                mvPlayback.stop()
                             })
                         } else {
                             Text(artist.name)
@@ -600,6 +782,7 @@ struct MVDetailView: View {
 
     @MainActor
     private func load() async {
+        mvPlayback.activate(mvID: mvID)
         loadGeneration &+= 1
         let generation = loadGeneration
         isLoading = true
@@ -608,6 +791,13 @@ struct MVDetailView: View {
             let response = try await NeteaseAPI.mvDetail(id: mvID)
             guard generation == loadGeneration, !Task.isCancelled else { return }
             detail = response
+            mvPlayback.enrichQueue([], around: response)
+            if mvPlayback.queue.count <= 1,
+               let artistID = response.artists.first(where: { $0.id > 0 })?.id,
+               let related = (try? await NeteaseAPI.artistMVs(id: artistID, limit: 50))?.mvs {
+                guard generation == loadGeneration, !Task.isCancelled else { return }
+                mvPlayback.enrichQueue(related, around: response)
+            }
         } catch {
             guard generation == loadGeneration, !Task.isCancelled else { return }
             detail = nil
@@ -622,11 +812,19 @@ struct MVDetailView: View {
             .first(where: { !$0.isEmpty })
     }
 
+    private func openFullscreen(_ detail: MVSummary) {
+        if videoPlayer == nil, !mvPlayback.isPreparing {
+            mvPlayback.prepare(detail: detail, audioPlayer: audioPlayer)
+        }
+        showsFullscreenPlayer = true
+    }
+
 }
 
 private struct MVFullscreenPlayer: View {
-    private enum Control: Hashable {
-        case playPause
+    private enum FallbackControl: Hashable {
+        case retry
+        case next
         case close
     }
 
@@ -635,102 +833,199 @@ private struct MVFullscreenPlayer: View {
 
     @Environment(PlayerService.self) private var audioPlayer
     private let mvPlayback = MVPlaybackController.shared
-    @FocusState private var focusedControl: Control?
+    @FocusState private var focusedControl: FallbackControl?
+
+    private var currentDetail: MVSummary {
+        mvPlayback.currentDetail ?? detail
+    }
 
     var body: some View {
-        ZStack {
-            Color.black
-                .ignoresSafeArea()
-
+        Group {
             if let player = mvPlayback.player {
-                InlineMVPlayer(player: player)
+                SystemMVPlayer(
+                    player: player,
+                    detail: currentDetail,
+                    servedResolution: mvPlayback.servedResolution,
+                    autoplayEnabled: mvPlayback.autoplayEnabled,
+                    canSkip: mvPlayback.canSkip,
+                    nextTitle: mvPlayback.nextSummary?.name,
+                    onPrevious: { mvPlayback.playPrevious(audioPlayer: audioPlayer) },
+                    onNext: { mvPlayback.playNext(audioPlayer: audioPlayer) },
+                    onToggleAutoplay: mvPlayback.toggleAutoplay
+                )
                     .ignoresSafeArea()
             } else if mvPlayback.isPreparing {
-                VStack(spacing: 18) {
-                    ProgressView()
-                        .controlSize(.large)
-                    Text("正在准备视频")
-                        .font(.title3.bold())
+                ZStack {
+                    Color.black
+                    VStack(spacing: 20) {
+                        ProgressView()
+                            .controlSize(.large)
+                        Text("正在准备视频")
+                            .font(.title2.bold())
+                        Text(currentDetail.name)
+                            .font(.headline)
+                            .foregroundStyle(.white.opacity(0.62))
+                    }
                 }
                 .foregroundStyle(.white)
             } else if let errorMessage = mvPlayback.errorMessage {
-                VStack(spacing: 16) {
-                    Image(systemName: "exclamationmark.triangle.fill")
-                        .font(.system(size: 48))
-                        .foregroundStyle(.orange)
-                    Text("暂时无法播放")
-                        .font(.title2.bold())
-                    Text(errorMessage)
-                        .font(.headline)
-                        .foregroundStyle(.white.opacity(0.68))
-                        .multilineTextAlignment(.center)
-                        .frame(maxWidth: 760)
-                }
-            }
+                ZStack {
+                    Color.black
+                    VStack(spacing: 18) {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .font(.system(size: 48))
+                            .foregroundStyle(.orange)
+                        Text("暂时无法播放")
+                            .font(.title2.bold())
+                        Text(errorMessage)
+                            .font(.headline)
+                            .foregroundStyle(.white.opacity(0.68))
+                            .multilineTextAlignment(.center)
+                            .frame(maxWidth: 760)
 
-            LinearGradient(
-                colors: [.black.opacity(0.24), .clear, .black.opacity(0.72)],
-                startPoint: .top,
-                endPoint: .bottom
-            )
-            .ignoresSafeArea()
-            .allowsHitTesting(false)
+                        HStack(spacing: 16) {
+                            Button {
+                                mvPlayback.prepare(detail: currentDetail, audioPlayer: audioPlayer)
+                            } label: {
+                                Label("重试", systemImage: "arrow.clockwise")
+                            }
+                            .buttonStyle(TVPillButtonStyle(prominent: true))
+                            .focused($focusedControl, equals: .retry)
 
-            VStack(alignment: .leading, spacing: 0) {
-                HStack {
-                    Text("音乐视频")
-                        .font(.headline.bold())
-                        .foregroundStyle(TVTheme.accent)
-                    Spacer()
-                    if let servedResolution = mvPlayback.servedResolution {
-                        Label("\(servedResolution)p", systemImage: "tv")
-                            .font(.headline.bold())
-                            .foregroundStyle(.white.opacity(0.78))
-                    }
-                }
+                            if mvPlayback.canSkip {
+                                Button {
+                                    mvPlayback.playNext(audioPlayer: audioPlayer)
+                                } label: {
+                                    Label("播放下一支", systemImage: "forward.end.fill")
+                                }
+                                .buttonStyle(TVPillButtonStyle())
+                                .focused($focusedControl, equals: .next)
+                            }
 
-                Spacer()
-
-                HStack(alignment: .bottom, spacing: 18) {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text(detail.name)
-                            .font(.system(size: 46, weight: .bold, design: .rounded))
-                            .lineLimit(2)
-                        if !detail.artistNames.isEmpty {
-                            Text(detail.artistNames)
-                                .font(.title3)
-                                .foregroundStyle(.white.opacity(0.72))
+                            Button(action: onClose) {
+                                Text("返回详情")
+                            }
+                            .buttonStyle(TVPillButtonStyle())
+                            .focused($focusedControl, equals: .close)
                         }
+                        .padding(.top, 10)
                     }
-
-                    Spacer()
-
-                    if mvPlayback.player != nil {
-                        Button {
-                            mvPlayback.toggle(audioPlayer: audioPlayer)
-                        } label: {
-                            Image(systemName: mvPlayback.isPlaying ? "pause.fill" : "play.fill")
-                        }
-                        .buttonStyle(TVIconButtonStyle(size: 72, prominent: true))
-                        .focused($focusedControl, equals: .playPause)
-                        .accessibilityLabel(mvPlayback.isPlaying ? "暂停" : "继续播放")
-                    }
-
-                    Button(action: onClose) {
-                        Label("退出全屏", systemImage: "arrow.down.right.and.arrow.up.left")
-                    }
-                    .buttonStyle(TVPillButtonStyle())
-                    .focused($focusedControl, equals: .close)
                 }
+                .foregroundStyle(.white)
+            } else {
+                Color.black
             }
-            .padding(.horizontal, 88)
-            .padding(.vertical, 64)
         }
-        .onAppear { focusedControl = mvPlayback.player == nil ? .close : .playPause }
+        .ignoresSafeArea()
+        .onAppear { focusedControl = .retry }
         .onExitCommand(perform: onClose)
-        .onPlayPauseCommand {
-            mvPlayback.toggle(audioPlayer: audioPlayer)
+    }
+}
+
+private struct SystemMVPlayer: UIViewControllerRepresentable {
+    let player: AVPlayer
+    let detail: MVSummary
+    let servedResolution: Int?
+    let autoplayEnabled: Bool
+    let canSkip: Bool
+    let nextTitle: String?
+    let onPrevious: () -> Void
+    let onNext: () -> Void
+    let onToggleAutoplay: () -> Void
+
+    func makeUIViewController(context: Context) -> AVPlayerViewController {
+        let controller = AVPlayerViewController()
+        controller.view.backgroundColor = .black
+        controller.showsPlaybackControls = true
+        controller.playbackControlsIncludeTransportBar = true
+        controller.playbackControlsIncludeInfoViews = true
+        controller.transportBarIncludesTitleView = true
+        controller.videoGravity = .resizeAspect
+        configure(controller)
+        return controller
+    }
+
+    func updateUIViewController(_ controller: AVPlayerViewController, context: Context) {
+        configure(controller)
+    }
+
+    static func dismantleUIViewController(_ controller: AVPlayerViewController, coordinator: ()) {
+        controller.player = nil
+    }
+
+    private func configure(_ controller: AVPlayerViewController) {
+        if controller.player !== player {
+            controller.player = player
         }
+
+        var customItems: [UIMenuElement] = []
+        if canSkip {
+            customItems.append(
+                UIAction(title: "上一支", image: UIImage(systemName: "backward.end.fill")) { _ in
+                    onPrevious()
+                }
+            )
+            customItems.append(
+                UIAction(title: "下一支", image: UIImage(systemName: "forward.end.fill")) { _ in
+                    onNext()
+                }
+            )
+        }
+
+        let autoplayAction = UIAction(
+            title: autoplayEnabled ? "自动连播已开启" : "自动连播已关闭",
+            image: UIImage(systemName: "infinity"),
+            state: autoplayEnabled ? .on : .off
+        ) { _ in
+            onToggleAutoplay()
+        }
+        var queueItems: [UIMenuElement] = [autoplayAction]
+        if let nextTitle, canSkip {
+            queueItems.append(
+                UIAction(title: "接下来：\(nextTitle)", attributes: [.disabled]) { _ in }
+            )
+        }
+        if let servedResolution {
+            queueItems.append(
+                UIAction(title: "当前清晰度：\(servedResolution)p", attributes: [.disabled]) { _ in }
+            )
+        }
+        customItems.append(
+            UIMenu(
+                title: "播放队列",
+                image: UIImage(systemName: "rectangle.stack.fill"),
+                children: queueItems
+            )
+        )
+        controller.transportBarCustomMenuItems = customItems
+    }
+}
+
+private struct MVVideoStageButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .modifier(MVVideoStageFocusEffect(isPressed: configuration.isPressed))
+    }
+}
+
+private struct MVVideoStageFocusEffect: ViewModifier {
+    @Environment(\.isFocused) private var isFocused
+    let isPressed: Bool
+
+    func body(content: Content) -> some View {
+        content
+            .overlay {
+                RoundedRectangle(cornerRadius: 28, style: .continuous)
+                    .stroke(isFocused ? .white : .white.opacity(0.12), lineWidth: isFocused ? 5 : 1)
+            }
+            .scaleEffect(isPressed ? 0.99 : (isFocused ? 1.018 : 1))
+            .shadow(
+                color: isFocused ? TVTheme.accent.opacity(0.38) : .black.opacity(0.42),
+                radius: isFocused ? 42 : 34,
+                y: 18
+            )
+            .animation(.easeOut(duration: 0.18), value: isFocused)
+            .animation(.easeOut(duration: 0.1), value: isPressed)
     }
 }
 
@@ -947,7 +1242,7 @@ private struct TrackCollectionView: View {
                 if !relatedMVs.isEmpty {
                     HorizontalShelf(title: "音乐视频", subtitle: "来自这位歌手的 MV") {
                         ForEach(relatedMVs) { mv in
-                            MVCard(mv: mv)
+                            MVCard(mv: mv, queue: relatedMVs)
                                 .focused($focusedRoute, equals: .mv(mv.id))
                                 .simultaneousGesture(TapGesture().onEnded {
                                     lastFocusedRoute = .mv(mv.id)

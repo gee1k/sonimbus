@@ -160,8 +160,8 @@ struct AppShellView: View {
         case .library: route = libraryPath.last
         case .nowPlaying: route = nil
         }
-        if case .mv(let id) = route {
-            MVPlaybackController.shared.stop(mvID: id)
+        if case .mv = route {
+            MVPlaybackController.shared.stop()
         }
     }
 
@@ -223,8 +223,8 @@ struct AppShellView: View {
             break
         }
         if didPop {
-            if case .mv(let id) = navigationFocusRestorationRoute {
-                MVPlaybackController.shared.stop(mvID: id)
+            if case .mv = navigationFocusRestorationRoute {
+                MVPlaybackController.shared.stop()
             }
             navigationFocusRestorationGeneration &+= 1
         }

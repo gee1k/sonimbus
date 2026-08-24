@@ -71,6 +71,22 @@ enum PlaybackQueuePolicy {
     }
 }
 
+enum MVQueuePolicy {
+    static func deduplicated(_ videos: [MVSummary]) -> [MVSummary] {
+        var seen = Set<Int>()
+        return videos.filter { seen.insert($0.id).inserted }
+    }
+
+    static func adjacentIndex(from currentIndex: Int, count: Int, offset: Int) -> Int? {
+        guard count > 1, offset != 0 else { return nil }
+        guard (0..<count).contains(currentIndex) else {
+            return offset > 0 ? 0 : count - 1
+        }
+        let candidate = (currentIndex + offset) % count
+        return candidate >= 0 ? candidate : candidate + count
+    }
+}
+
 struct ArtistRef: Codable, Hashable, Identifiable {
     let id: Int
     let name: String

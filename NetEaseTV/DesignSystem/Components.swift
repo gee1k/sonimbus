@@ -161,6 +161,7 @@ struct ArtistCard: View {
 struct MVCard: View {
     let mv: MVSummary
     var width: CGFloat = 360
+    var queue: [MVSummary] = []
 
     private var height: CGFloat { width * 9 / 16 }
 
@@ -200,6 +201,9 @@ struct MVCard: View {
             .frame(width: width, alignment: .leading)
         }
         .buttonStyle(TVCardButtonStyle(cornerRadius: 22))
+        .simultaneousGesture(TapGesture().onEnded {
+            MVPlaybackController.shared.configureQueue(queue.isEmpty ? [mv] : queue, startingAt: mv.id)
+        })
     }
 }
 

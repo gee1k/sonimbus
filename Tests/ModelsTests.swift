@@ -167,6 +167,28 @@ func deduplicatesPlaybackQueue() {
     #expect(PlaybackQueuePolicy.deduplicated([first, duplicate, second]).map(\.name) == ["第一首", "第二首"])
 }
 
+@Test("MV 连播队列去重并首尾循环")
+func resolvesMVQueueOrder() throws {
+    let first = try JSONDecoder().decode(
+        MVSummary.self,
+        from: Data(#"{"id":1,"name":"第一支","artistName":"歌手"}"#.utf8)
+    )
+    let duplicate = try JSONDecoder().decode(
+        MVSummary.self,
+        from: Data(#"{"id":1,"name":"重复项","artistName":"歌手"}"#.utf8)
+    )
+    let second = try JSONDecoder().decode(
+        MVSummary.self,
+        from: Data(#"{"id":2,"name":"第二支","artistName":"歌手"}"#.utf8)
+    )
+
+    #expect(MVQueuePolicy.deduplicated([first, duplicate, second]).map(\.name) == ["第一支", "第二支"])
+    #expect(MVQueuePolicy.adjacentIndex(from: 0, count: 2, offset: 1) == 1)
+    #expect(MVQueuePolicy.adjacentIndex(from: 1, count: 2, offset: 1) == 0)
+    #expect(MVQueuePolicy.adjacentIndex(from: 0, count: 2, offset: -1) == 1)
+    #expect(MVQueuePolicy.adjacentIndex(from: 0, count: 1, offset: 1) == nil)
+}
+
 @Test("MV 模型兼容推荐、详情与播放地址字段")
 func decodesMVShapes() throws {
     let summaryData = Data(#"{"id":77,"name":"现场 MV","picUrl":"http://example.com/mv.jpg","artistId":9,"artistName":"歌手","duration":245000,"playCount":"12345","brs":{"480":1,"1080":1}}"#.utf8)

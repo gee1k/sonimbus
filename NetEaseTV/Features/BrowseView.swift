@@ -133,7 +133,7 @@ struct BrowseView: View {
                 if !mvs.isEmpty {
                     HorizontalShelf(title: "音乐视频", subtitle: "为大屏精选的网易云 MV") {
                         ForEach(mvs) { mv in
-                            MVCard(mv: mv)
+                            MVCard(mv: mv, queue: mvs)
                                 .focused($focusedRoute, equals: .mv(mv.id))
                                 .id(AppRoute.mv(mv.id))
                                 .simultaneousGesture(TapGesture().onEnded {

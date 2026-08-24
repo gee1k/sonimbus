@@ -125,8 +125,9 @@ struct SearchView: View {
         case .artists:
             cardGrid(items: result.artists ?? [], hasMore: hasMore(result)) { ArtistCard(artist: $0) }
         case .mvs:
-            cardGrid(items: result.mvs ?? [], hasMore: hasMore(result), columnCount: 4) {
-                MVCard(mv: $0, width: 350)
+            let videos = result.mvs ?? []
+            cardGrid(items: videos, hasMore: hasMore(result), columnCount: 4) {
+                MVCard(mv: $0, width: 350, queue: videos)
             }
         }
     }
