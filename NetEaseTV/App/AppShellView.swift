@@ -60,6 +60,7 @@ struct AppShellView: View {
     @State private var libraryPath: [AppRoute] = []
     @State private var browseSession = BrowseSession()
     @State private var searchSession = SearchSession()
+    @State private var browseActivationGeneration = 0
     @State private var isNowPlayingPresented = false
     @State private var navigationFocusRestorationGeneration = 0
     @State private var navigationFocusRestorationRoute: AppRoute?
@@ -75,7 +76,10 @@ struct AppShellView: View {
                 .tabItem { Label("现在就听", systemImage: "play.circle.fill") }
 
                 tabNavigation(path: $browsePath) {
-                    BrowseView(session: browseSession)
+                    BrowseView(
+                        session: browseSession,
+                        activationGeneration: browseActivationGeneration
+                    )
                 }
                 .tag(RootTab.browse)
                 .tabItem { Label("浏览", systemImage: "square.grid.2x2.fill") }
@@ -121,6 +125,9 @@ struct AppShellView: View {
         .animation(reduceMotion ? nil : .easeOut(duration: 0.22), value: isNowPlayingPresented)
         .onChange(of: selectedTab) { oldTab, newTab in
             if oldTab != newTab { stopMVIfNeeded(in: oldTab) }
+            if newTab == .browse, oldTab != .browse, oldTab != .nowPlaying {
+                browseActivationGeneration &+= 1
+            }
             if newTab == .nowPlaying {
                 if oldTab != .nowPlaying { lastContentTab = oldTab }
                 isNowPlayingPresented = true
