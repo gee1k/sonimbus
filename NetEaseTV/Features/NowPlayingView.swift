@@ -1,0 +1,1083 @@
+import SwiftUI
+
+private enum NowPlayingFocus: Hashable {
+    case close
+    case fmDislike
+    case artist(Int)
+    case album
+    case favorite
+    case moreActions
+    case seek
+    case shuffle
+    case previous
+    case play
+    case next
+    case repeatMode
+    case lyricsRetry
+    case lyricsMode
+    case queueMode
+}
+
+private enum NowPlayingDetailDestination: Identifiable {
+    case artist(ArtistRef)
+    case album(AlbumRef)
+
+    var id: String {
+        switch self {
+        case .artist(let artist): "artist-\(artist.id)"
+        case .album(let album): "album-\(album.id)"
+        }
+    }
+}
+
+struct NowPlayingView: View {
+    private enum Panel {
+        case lyrics
+        case queue
+    }
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.resetFocus) private var resetFocus
+    @Environment(PlayerService.self) private var player
+    @Environment(AccountStore.self) private var account
+    @Environment(ToastCenter.self) private var toast
+    @Namespace private var focusScope
+    let onClose: () -> Void
+    @State private var panel: Panel?
+    @State private var panelBeforeQueue: Panel?
+    @State private var selectedDetail: NowPlayingDetailDestination?
+    @State private var lastSelectedDetailFocus: NowPlayingFocus?
+    @State private var acceptsPanelActivation = false
+    @State private var controlsReady = false
+    @FocusState private var focusedControl: NowPlayingFocus?
+    @FocusState private var focusedQueueID: Int?
+
+    init(onClose: @escaping () -> Void) {
+        self.onClose = onClose
+        _panel = State(initialValue: .lyrics)
+    }
+
+    var body: some View {
+        ZStack {
+            background
+            if player.currentTrack == nil {
+                emptyPlayer
+            } else {
+                VStack(spacing: 0) {
+                    header
+                    stage
+                    playbackChrome
+                }
+                .padding(.horizontal, 76)
+                .padding(.vertical, 30)
+            }
+            toastOverlay
+        }
+        .focusScope(focusScope)
+        .focusSection()
+        .animation(reduceMotion ? nil : .easeOut(duration: 0.2), value: toast.current)
+        .onAppear {
+            acceptsPanelActivation = false
+            controlsReady = false
+            focusedQueueID = nil
+            focusedControl = initialControlFocus
+        }
+        .task {
+            // The full-screen transition can finish its tvOS focus handoff after onAppear.
+            // Keep every earlier control disabled while focus is handed to Play,
+            // so a shortcut-origin presentation cannot fall through to Close.
+            // Ignore the Return key-up that presented this player. Without this
+            // short gate it can immediately toggle the newly focused control.
+            try? await Task.sleep(for: .milliseconds(520))
+            guard !Task.isCancelled else { return }
+            focusedQueueID = nil
+            focusedControl = nil
+            await Task.yield()
+            focusedControl = initialControlFocus
+            await Task.yield()
+            resetFocus(in: focusScope)
+            try? await Task.sleep(for: .milliseconds(80))
+            guard !Task.isCancelled else { return }
+            acceptsPanelActivation = true
+            controlsReady = true
+        }
+        .onChange(of: player.currentTrack?.id) { oldID, newID in
+            if oldID == nil, newID != nil {
+                requestControlFocus(.play)
+            } else if newID == nil {
+                requestControlFocus(.close)
+            }
+        }
+        .fullScreenCover(item: $selectedDetail, onDismiss: restoreDetailFocus) { destination in
+            detailCover(destination)
+        }
+        .onExitCommand(perform: handleExitCommand)
+    }
+
+    private var background: some View {
+        ZStack {
+            TVBackground(tint: TVTheme.magenta)
+            if let url = player.currentTrack?.artworkURL {
+                AsyncImage(url: url) { image in
+                    image.resizable().scaledToFill()
+                } placeholder: {
+                    Color.clear
+                }
+                .blur(radius: 100)
+                .opacity(0.34)
+                .scaleEffect(1.25)
+                .ignoresSafeArea()
+            }
+            LinearGradient(
+                colors: [Color.black.opacity(0.12), Color.black.opacity(0.34), Color.black.opacity(0.58)],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+            .ignoresSafeArea()
+        }
+    }
+
+    @ViewBuilder
+    private var toastOverlay: some View {
+        if let toast = toast.current {
+            Text(toast.text)
+                .font(.headline)
+                .padding(.horizontal, 28)
+                .padding(.vertical, 18)
+                .glassPanel(cornerRadius: 22)
+                .padding(.bottom, 48)
+                .frame(maxHeight: .infinity, alignment: .bottom)
+                .transition(.move(edge: .bottom).combined(with: .opacity))
+                .allowsHitTesting(false)
+                .zIndex(3)
+        }
+    }
+
+    private var emptyPlayer: some View {
+        VStack(spacing: 30) {
+            Button { closePlayer() } label: {
+                Label("返回", systemImage: "chevron.down")
+            }
+            .buttonStyle(TVPillButtonStyle())
+            .focused($focusedControl, equals: .close)
+            .prefersDefaultFocus(player.currentTrack == nil, in: focusScope)
+
+            if player.isLoadingPersonalFM {
+                VStack(spacing: 22) {
+                    ProgressView()
+                        .controlSize(.large)
+                    Text("正在为你挑选音乐…")
+                        .font(.system(size: 42, weight: .bold, design: .rounded))
+                    Text("私人 FM 会根据你的听歌偏好持续更新。")
+                        .font(.title3)
+                        .foregroundStyle(TVTheme.secondaryText)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if player.source == .personalFM {
+                EmptyStateView(
+                    title: "私人 FM 暂时没有新推荐",
+                    message: "稍后回到首页再试一次。",
+                    symbol: "dot.radiowaves.left.and.right"
+                )
+            } else {
+                EmptyStateView(
+                    title: "还没有正在播放的音乐",
+                    message: "从歌曲、专辑或歌单中选择一首开始播放。",
+                    symbol: "music.note"
+                )
+            }
+        }
+        .padding(76)
+    }
+
+    private var header: some View {
+        HStack {
+            Button { closePlayer() } label: {
+                Image(systemName: "chevron.down")
+            }
+            .buttonStyle(TVPlaybackButtonStyle(size: 54, prominent: true))
+            .focused($focusedControl, equals: .close)
+            .disabled(!controlsReady)
+            .accessibilityLabel("返回")
+            .onMoveCommand { direction in
+                if direction == .down { requestControlFocus(.favorite) }
+            }
+
+            Spacer()
+
+            if let source = player.alternativeSource {
+                Text("补全音源 · \(source)")
+                    .font(.caption.bold())
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 7)
+                    .background(TVTheme.amber.opacity(0.20), in: Capsule())
+                    .foregroundStyle(TVTheme.amber)
+            } else if player.isTrial {
+                Text("试听片段")
+                    .font(.caption.bold())
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 7)
+                    .background(TVTheme.accent.opacity(0.22), in: Capsule())
+                    .foregroundStyle(TVTheme.accent)
+            } else if let quality = player.servedQuality {
+                Text(AudioQuality.displayName(for: quality))
+                    .font(.caption2.bold())
+                    .padding(.horizontal, 11)
+                    .padding(.vertical, 6)
+                    .background(Color.white.opacity(0.10), in: Capsule())
+                    .foregroundStyle(.white.opacity(0.72))
+            }
+        }
+        .frame(height: 56)
+    }
+
+    private var stage: some View {
+        Group {
+            if let panel {
+                HStack(alignment: .center, spacing: 82) {
+                    artworkAndMetadata(size: 430)
+                    Group {
+                        switch panel {
+                        case .lyrics: lyricsPanel
+                        case .queue: queuePanel
+                        }
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                }
+            } else {
+                artworkAndMetadata(size: 500)
+                    .frame(maxWidth: .infinity)
+            }
+        }
+        .padding(.top, 4)
+        .padding(.bottom, 14)
+        .frame(height: 640)
+    }
+
+    private func artworkAndMetadata(size: CGFloat) -> some View {
+        VStack(alignment: .leading, spacing: 18) {
+            ArtworkView(url: player.currentTrack?.artworkURL, cornerRadius: 25)
+                .frame(width: size, height: size)
+                .shadow(color: .black.opacity(0.56), radius: 38, y: 20)
+
+            HStack(alignment: .center, spacing: 14) {
+                Text(player.currentTrack?.name ?? "")
+                    .font(.system(size: 31, weight: .bold, design: .rounded))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.72)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                Spacer(minLength: 8)
+
+                if let track = player.currentTrack {
+                    HStack(spacing: 6) {
+                        if player.source == .personalFM {
+                            Button {
+                                player.dislikeCurrentFM()
+                            } label: {
+                                Image(systemName: "hand.thumbsdown.fill")
+                            }
+                            .buttonStyle(TVPlaybackButtonStyle(size: 54))
+                            .focused($focusedControl, equals: .fmDislike)
+                            .disabled(!controlsReady)
+                            .accessibilityLabel("减少类似推荐并播放下一首")
+                            .onMoveCommand { direction in
+                                switch direction {
+                                case .up: requestControlFocus(.close)
+                                case .right: requestControlFocus(.favorite)
+                                case .down: requestControlFocus(metadataFocusBelowActions)
+                                default: break
+                                }
+                            }
+                        }
+
+                        Button {
+                            Task { await account.toggleLike(track) }
+                        } label: {
+                            Image(systemName: account.isLiked(track) ? "heart.fill" : "heart")
+                        }
+                        .buttonStyle(TVPlaybackButtonStyle(size: 54, active: account.isLiked(track)))
+                        .focused($focusedControl, equals: .favorite)
+                        .disabled(!controlsReady)
+                        .accessibilityLabel(account.isLiked(track) ? "取消喜欢" : "喜欢")
+                        .onMoveCommand { direction in
+                            switch direction {
+                            case .up: requestControlFocus(.close)
+                            case .down: requestControlFocus(metadataFocusBelowActions)
+                            case .left where player.source == .personalFM:
+                                requestControlFocus(.fmDislike)
+                            case .left:
+                                if let artist = navigableArtists.last {
+                                    requestControlFocus(.artist(artist.id))
+                                } else if navigableAlbum != nil {
+                                    requestControlFocus(.album)
+                                }
+                            case .right: requestControlFocus(.moreActions)
+                            default: break
+                            }
+                        }
+
+                        moreActionsMenu(for: track)
+                    }
+                }
+            }
+
+            if !navigableArtists.isEmpty || navigableAlbum != nil {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
+                        ForEach(navigableArtists) { artist in
+                            Button {
+                                lastSelectedDetailFocus = .artist(artist.id)
+                                selectedDetail = .artist(artist)
+                            } label: {
+                                HStack(spacing: 6) {
+                                    Text(artist.name)
+                                        .lineLimit(1)
+                                    Image(systemName: "chevron.right")
+                                        .font(.caption.bold())
+                                }
+                            }
+                            .buttonStyle(NowPlayingArtistButtonStyle())
+                            .focused($focusedControl, equals: .artist(artist.id))
+                            .disabled(!controlsReady)
+                            .accessibilityLabel("查看歌手\(artist.name)")
+                            .onMoveCommand { direction in
+                                switch direction {
+                                case .up: requestControlFocus(.favorite)
+                                case .down: requestControlFocus(.seek)
+                                default: break
+                                }
+                            }
+                        }
+
+                        if let album = navigableAlbum {
+                            Button {
+                                lastSelectedDetailFocus = .album
+                                selectedDetail = .album(album)
+                            } label: {
+                                HStack(spacing: 6) {
+                                    Image(systemName: "square.stack")
+                                        .font(.caption.bold())
+                                    Text(album.name)
+                                        .lineLimit(1)
+                                    Image(systemName: "chevron.right")
+                                        .font(.caption.bold())
+                                }
+                            }
+                            .buttonStyle(NowPlayingArtistButtonStyle())
+                            .focused($focusedControl, equals: .album)
+                            .disabled(!controlsReady)
+                            .accessibilityLabel("查看专辑\(album.name)")
+                            .onMoveCommand { direction in
+                                switch direction {
+                                case .up: requestControlFocus(.moreActions)
+                                case .down: requestControlFocus(.seek)
+                                default: break
+                                }
+                            }
+                        }
+                    }
+                    .padding(.horizontal, 3)
+                    .padding(.vertical, 6)
+                }
+                .frame(height: 52)
+            } else if let artistNames = player.currentTrack?.artistNames, !artistNames.isEmpty {
+                Text(artistNames)
+                    .font(.system(size: 21, weight: .semibold, design: .rounded))
+                    .foregroundStyle(.white.opacity(0.62))
+                    .lineLimit(1)
+            }
+        }
+        .frame(width: size)
+    }
+
+    private func moreActionsMenu(for track: Track) -> some View {
+        Menu {
+            Button(account.isLiked(track) ? "取消喜欢" : "喜欢") {
+                Task { await account.toggleLike(track) }
+            }
+
+            if !account.ownedPlaylists.isEmpty {
+                Menu("添加到歌单") {
+                    ForEach(account.ownedPlaylists) { playlist in
+                        Button(playlist.name) {
+                            Task { await account.add(track, to: playlist) }
+                        }
+                    }
+                }
+            }
+
+            if let playlistID = player.source.playlistID,
+               playlistID == account.likedSongsPlaylist?.id,
+               !track.noCopyright {
+                Button("从这首开启心动模式") {
+                    player.startIntelligence(from: track, playlistID: playlistID)
+                }
+            }
+
+            if navigableAlbum != nil || !navigableArtists.isEmpty {
+                Divider()
+            }
+
+            if let album = navigableAlbum {
+                Button("查看专辑《\(album.name)》") {
+                    lastSelectedDetailFocus = .moreActions
+                    selectedDetail = .album(album)
+                }
+            }
+
+            if navigableArtists.count == 1, let artist = navigableArtists.first {
+                Button("查看歌手“\(artist.name)”") {
+                    lastSelectedDetailFocus = .moreActions
+                    selectedDetail = .artist(artist)
+                }
+            } else if navigableArtists.count > 1 {
+                Menu("查看歌手") {
+                    ForEach(navigableArtists) { artist in
+                        Button(artist.name) {
+                            lastSelectedDetailFocus = .moreActions
+                            selectedDetail = .artist(artist)
+                        }
+                    }
+                }
+            }
+
+            if let playlistID = player.source.playlistID,
+               let playlist = account.ownedPlaylists.first(where: { $0.id == playlistID }) {
+                Divider()
+                Button("从《\(playlist.name)》中移除", role: .destructive) {
+                    Task { await account.remove(track, from: playlist) }
+                }
+            }
+        } label: {
+            Image(systemName: "ellipsis")
+        }
+        .buttonStyle(TVPlaybackButtonStyle(size: 54))
+        .focused($focusedControl, equals: .moreActions)
+        .disabled(!controlsReady)
+        .accessibilityLabel("更多操作")
+        .onMoveCommand { direction in
+            switch direction {
+            case .up: requestControlFocus(.close)
+            case .left: requestControlFocus(.favorite)
+            case .down: requestControlFocus(metadataFocusBelowActions)
+            default: break
+            }
+        }
+    }
+
+    private var lyricsPanel: some View {
+        Group {
+            if player.lyrics?.isInstrumental == true, player.lyrics?.lines.isEmpty == true {
+                VStack(alignment: .leading, spacing: 20) {
+                    Image(systemName: "waveform.path")
+                        .font(.system(size: 68, weight: .medium))
+                    Text("纯音乐，请欣赏")
+                        .font(.system(size: 44, weight: .bold, design: .rounded))
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .foregroundStyle(.white.opacity(0.76))
+            } else if let lines = player.lyrics?.lines, !lines.isEmpty {
+                ScrollViewReader { proxy in
+                    ScrollView(showsIndicators: false) {
+                        LazyVStack(alignment: .leading, spacing: 34) {
+                            Color.clear.frame(height: 210)
+                            ForEach(lines) { line in
+                                let active = line.id == player.activeLyricIndex
+                                VStack(alignment: .leading, spacing: 9) {
+                                    Text(line.text.isEmpty ? "♪" : line.text)
+                                        .font(.system(
+                                            size: active ? 48 : 36,
+                                            weight: active ? .bold : .semibold,
+                                            design: .rounded
+                                        ))
+                                    if player.showsTranslatedLyrics,
+                                       let translation = line.translation, !translation.isEmpty {
+                                        Text(translation)
+                                            .font(.system(size: active ? 25 : 21, weight: .semibold, design: .rounded))
+                                            .foregroundStyle(active ? .white.opacity(0.78) : .white.opacity(0.32))
+                                    }
+                                    if player.showsTranslatedLyrics,
+                                       let romaji = line.romaji, !romaji.isEmpty {
+                                        Text(romaji)
+                                            .font(.headline)
+                                            .foregroundStyle(.white.opacity(active ? 0.54 : 0.24))
+                                    }
+                                }
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .foregroundStyle(active ? .white : .white.opacity(0.30))
+                                .scaleEffect(active || reduceMotion ? 1 : 0.975, anchor: .leading)
+                                .animation(reduceMotion ? nil : .easeOut(duration: 0.24), value: active)
+                                .id(line.id)
+                            }
+                            Color.clear.frame(height: 230)
+                        }
+                    }
+                    .mask(
+                        LinearGradient(
+                            stops: [
+                                .init(color: .clear, location: 0),
+                                .init(color: .black, location: 0.17),
+                                .init(color: .black, location: 0.82),
+                                .init(color: .clear, location: 1),
+                            ],
+                            startPoint: .top,
+                            endPoint: .bottom
+                        )
+                    )
+                    .onAppear {
+                        guard let index = player.activeLyricIndex else { return }
+                        proxy.scrollTo(index, anchor: .center)
+                    }
+                    .onChange(of: player.activeLyricIndex) { _, index in
+                        guard let index else { return }
+                        if reduceMotion {
+                            proxy.scrollTo(index, anchor: .center)
+                        } else {
+                            withAnimation(.easeInOut(duration: 0.42)) {
+                                proxy.scrollTo(index, anchor: .center)
+                            }
+                        }
+                    }
+                }
+            } else if player.isLoadingLyrics {
+                VStack(alignment: .leading, spacing: 20) {
+                    ProgressView().controlSize(.large)
+                    Text("正在载入歌词…")
+                        .font(.title2.bold())
+                    Text("稍等片刻，歌词会自动同步到当前进度。")
+                        .font(.headline)
+                        .foregroundStyle(.white.opacity(0.48))
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            } else if let errorMessage = player.lyricsErrorMessage {
+                VStack(alignment: .leading, spacing: 20) {
+                    Image(systemName: "exclamationmark.bubble")
+                        .font(.system(size: 58, weight: .medium))
+                        .foregroundStyle(.white.opacity(0.66))
+                    Text(errorMessage)
+                        .font(.system(size: 38, weight: .bold, design: .rounded))
+                    Text("歌曲仍可正常播放，你可以立即重试。")
+                        .font(.headline)
+                        .foregroundStyle(.white.opacity(0.48))
+                    Button {
+                        player.retryLyrics()
+                    } label: {
+                        Label("重试歌词", systemImage: "arrow.clockwise")
+                    }
+                    .buttonStyle(TVPillButtonStyle(prominent: true))
+                    .focused($focusedControl, equals: .lyricsRetry)
+                    .disabled(!controlsReady)
+                    .onMoveCommand { direction in
+                        if direction == .down { requestControlFocus(.lyricsMode) }
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            } else {
+                VStack(alignment: .leading, spacing: 20) {
+                    Image(systemName: "quote.bubble")
+                        .font(.system(size: 58, weight: .medium))
+                        .foregroundStyle(.white.opacity(0.58))
+                    Text("这首歌暂无歌词")
+                        .font(.system(size: 38, weight: .bold, design: .rounded))
+                    Text("你仍然可以继续欣赏音乐。")
+                        .font(.headline)
+                        .foregroundStyle(.white.opacity(0.48))
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+    }
+
+    private var queuePanel: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            queueHeader
+
+            Group {
+                if player.playbackQueue.isEmpty {
+                    EmptyStateView(
+                        title: "当前队列为空",
+                        message: "私人 FM 会按播放进度持续加入歌曲。",
+                        symbol: "text.line.first.and.arrowtriangle.forward"
+                    )
+                } else {
+                    ScrollViewReader { proxy in
+                        ScrollView(.horizontal, showsIndicators: false) {
+                            LazyHStack(alignment: .center, spacing: 30) {
+                                ForEach(Array(player.playbackQueue.enumerated()), id: \.element.id) { index, track in
+                                    Button {
+                                        player.playTrack(track)
+                                    } label: {
+                                        VStack(alignment: .leading, spacing: 12) {
+                                            ArtworkView(url: track.artworkURL, cornerRadius: 20)
+                                                .frame(width: 235, height: 235)
+                                            Text(track.name)
+                                                .font(.headline)
+                                                .lineLimit(1)
+                                            Text(track.artistNames)
+                                                .font(.caption)
+                                                .opacity(0.58)
+                                                .lineLimit(1)
+                                            HStack(spacing: 7) {
+                                                Text("\(index + 1)")
+                                                if player.currentTrack?.id == track.id {
+                                                    Circle().fill(TVTheme.accent).frame(width: 6, height: 6)
+                                                    Text("正在播放")
+                                                }
+                                            }
+                                            .font(.caption2.bold().monospacedDigit())
+                                            .opacity(0.54)
+                                        }
+                                        .frame(width: 235, alignment: .leading)
+                                    }
+                                    .buttonStyle(NowPlayingQueueCardStyle(isCurrent: player.currentTrack?.id == track.id))
+                                    .focused($focusedQueueID, equals: track.id)
+                                    .contextMenu {
+                                        if player.currentTrack?.id != track.id {
+                                            Button("从播放队列移除", role: .destructive) {
+                                                player.removeFromQueue(track)
+                                            }
+                                        }
+                                    }
+                                    .onMoveCommand { direction in
+                                        switch direction {
+                                        case .up: requestControlFocus(queueHeaderFocus)
+                                        case .down: requestControlFocus(.seek)
+                                        default: break
+                                        }
+                                    }
+                                    .id(track.id)
+                                }
+                            }
+                            .padding(.horizontal, 34)
+                            .padding(.vertical, 42)
+                        }
+                        .scrollClipDisabled()
+                        .onAppear {
+                            guard let currentID = player.currentTrack?.id else { return }
+                            proxy.scrollTo(currentID, anchor: .center)
+                            focusedControl = nil
+                            focusedQueueID = currentID
+                        }
+                        .onChange(of: player.currentTrack?.id) { _, currentID in
+                            guard let currentID else { return }
+                            if reduceMotion {
+                                proxy.scrollTo(currentID, anchor: .center)
+                            } else {
+                                withAnimation(.easeInOut(duration: 0.28)) {
+                                    proxy.scrollTo(currentID, anchor: .center)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private var queueHeader: some View {
+        HStack(alignment: .center, spacing: 14) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("待播放")
+                    .font(.system(size: 28, weight: .bold, design: .rounded))
+                Text("\(player.playbackQueue.count) 首歌曲")
+                    .font(.caption)
+                    .foregroundStyle(.white.opacity(0.48))
+            }
+
+            Spacer()
+
+            HStack(spacing: 8) {
+                Button(action: player.toggleShuffle) {
+                    Image(systemName: "shuffle")
+                }
+                .buttonStyle(TVPlaybackButtonStyle(size: 54, active: player.shuffleEnabled))
+                .focused($focusedControl, equals: .shuffle)
+                .accessibilityLabel(player.shuffleEnabled ? "关闭随机播放" : "开启随机播放")
+                .disabled(player.source == .personalFM || !controlsReady)
+                .onMoveCommand { direction in
+                    switch direction {
+                    case .right: requestControlFocus(.repeatMode)
+                    case .down: focusCurrentQueueTrackOrSeek()
+                    default: break
+                    }
+                }
+
+                Button(action: player.cycleRepeat) {
+                    Image(systemName: player.repeatMode == .one ? "repeat.1" : "repeat")
+                }
+                .buttonStyle(TVPlaybackButtonStyle(size: 54, active: player.repeatMode != .off))
+                .focused($focusedControl, equals: .repeatMode)
+                .accessibilityLabel(repeatAccessibilityLabel)
+                .disabled(player.source == .personalFM || !controlsReady)
+                .onMoveCommand { direction in
+                    switch direction {
+                    case .left: requestControlFocus(.shuffle)
+                    case .down: focusCurrentQueueTrackOrSeek()
+                    default: break
+                    }
+                }
+            }
+        }
+        .padding(.horizontal, 34)
+        .frame(height: 72)
+    }
+
+    private var playbackChrome: some View {
+        VStack(spacing: 5) {
+            TVSeekBar(
+                progress: player.progress,
+                duration: player.duration,
+                seek: player.seek(to:),
+                isEnabled: controlsReady,
+                focus: $focusedControl,
+                moveUp: moveFocusAboveTimeline
+            )
+
+            HStack {
+                Text(DisplayFormatter.duration(player.progress))
+                Spacer()
+                Text("−" + DisplayFormatter.duration(max(player.duration - player.progress, 0)))
+            }
+            .font(.caption.monospacedDigit())
+            .foregroundStyle(.white.opacity(0.54))
+
+            ZStack {
+                HStack {
+                    Spacer()
+
+                    HStack(spacing: 8) {
+                        panelButton(.lyrics, symbol: "quote.bubble.fill", focus: .lyricsMode, label: "歌词")
+                        panelButton(.queue, symbol: "list.bullet", focus: .queueMode, label: "播放队列")
+                    }
+                }
+
+                HStack(spacing: 16) {
+                    Button(action: player.previous) {
+                        Image(systemName: "backward.fill")
+                    }
+                    .buttonStyle(TVPlaybackButtonStyle(size: 58))
+                    .focused($focusedControl, equals: .previous)
+                    .accessibilityLabel("上一首")
+                    .disabled(!player.canGoPrevious || !controlsReady)
+                    .onMoveCommand { direction in
+                        if direction == .right { requestControlFocus(.play) }
+                    }
+
+                    Button {
+                        guard controlsReady else { return }
+                        player.togglePlayPause()
+                    } label: {
+                        Group {
+                            if player.isBuffering {
+                                ProgressView()
+                            } else {
+                                Image(systemName: player.isPlaying ? "pause.fill" : "play.fill")
+                            }
+                        }
+                        .frame(width: 34, height: 34)
+                    }
+                    .buttonStyle(TVPlaybackButtonStyle(size: 66, prominent: true))
+                    .focused($focusedControl, equals: .play)
+                    .prefersDefaultFocus(initialControlFocus == .play, in: focusScope)
+                    .accessibilityLabel(player.isPlaying ? "暂停" : "播放")
+                    .onMoveCommand { direction in
+                        switch direction {
+                        case .left: requestControlFocus(.previous)
+                        case .right: requestControlFocus(.next)
+                        case .up: requestControlFocus(.seek)
+                        default: break
+                        }
+                    }
+
+                    Button(action: player.next) {
+                        Image(systemName: "forward.fill")
+                    }
+                    .buttonStyle(TVPlaybackButtonStyle(size: 58))
+                    .focused($focusedControl, equals: .next)
+                    .accessibilityLabel("下一首")
+                    .disabled(!player.canGoNext || !controlsReady)
+                    .onMoveCommand { direction in
+                        if direction == .left { requestControlFocus(.play) }
+                    }
+                }
+            }
+            .frame(height: 72)
+        }
+        .padding(.top, 26)
+        .padding(.horizontal, 4)
+        .frame(height: 190)
+    }
+
+    private func panelButton(
+        _ target: Panel,
+        symbol: String,
+        focus: NowPlayingFocus,
+        label: String
+    ) -> some View {
+        let isActive = panel == target
+        return Button {
+            guard acceptsPanelActivation else { return }
+            switch target {
+            case .lyrics:
+                panel = isActive ? nil : .lyrics
+            case .queue:
+                if isActive {
+                    restorePanelAfterQueue()
+                } else {
+                    panelBeforeQueue = panel
+                    panel = .queue
+                }
+            }
+            focusedControl = focus
+        } label: {
+            ZStack(alignment: .bottom) {
+                Image(systemName: symbol)
+                if isActive {
+                    Circle()
+                        .fill(TVTheme.accent)
+                        .frame(width: 6, height: 6)
+                        .offset(y: 1)
+                }
+            }
+        }
+        .buttonStyle(TVPlaybackButtonStyle(size: 62, active: isActive))
+        .focused($focusedControl, equals: focus)
+        .disabled(!controlsReady && focus != initialControlFocus)
+        .prefersDefaultFocus(focus == initialControlFocus, in: focusScope)
+        .accessibilityLabel(isActive ? "隐藏\(label)" : "显示\(label)")
+        .onMoveCommand { direction in
+            guard direction == .up else { return }
+            if target == .queue, panel == .queue, let currentID = player.currentTrack?.id {
+                requestQueueFocus(currentID)
+            } else if target == .lyrics, player.lyricsErrorMessage != nil {
+                requestControlFocus(.lyricsRetry)
+            } else {
+                requestControlFocus(.seek)
+            }
+        }
+    }
+
+    private func moveFocusAboveTimeline() {
+        if panel == .queue, let currentID = player.currentTrack?.id {
+            requestQueueFocus(currentID)
+        } else {
+            requestControlFocus(metadataFocusBelowActions)
+        }
+    }
+
+    private func focusCurrentQueueTrackOrSeek() {
+        if let currentID = player.currentTrack?.id,
+           player.playbackQueue.contains(where: { $0.id == currentID }) {
+            requestQueueFocus(currentID)
+        } else {
+            requestControlFocus(.seek)
+        }
+    }
+
+    private func requestControlFocus(_ target: NowPlayingFocus) {
+        Task { @MainActor in
+            await Task.yield()
+            focusedQueueID = nil
+            focusedControl = target
+        }
+    }
+
+    private func requestQueueFocus(_ trackID: Int) {
+        Task { @MainActor in
+            await Task.yield()
+            focusedControl = nil
+            focusedQueueID = trackID
+        }
+    }
+
+    private var initialControlFocus: NowPlayingFocus {
+        guard player.currentTrack != nil else { return .close }
+        return .play
+    }
+
+    private var repeatAccessibilityLabel: String {
+        switch player.repeatMode {
+        case .off: "循环播放已关闭"
+        case .all: "列表循环已开启"
+        case .one: "单曲循环已开启"
+        }
+    }
+
+    private var navigableArtists: [ArtistRef] {
+        var seen = Set<Int>()
+        return (player.currentTrack?.artists ?? []).filter {
+            $0.id > 0 && seen.insert($0.id).inserted
+        }
+    }
+
+    private var navigableAlbum: AlbumRef? {
+        guard let album = player.currentTrack?.album,
+              album.id > 0,
+              !album.name.isEmpty else { return nil }
+        return album
+    }
+
+    private var metadataFocusBelowActions: NowPlayingFocus {
+        if navigableAlbum != nil { return .album }
+        if let artist = navigableArtists.last { return .artist(artist.id) }
+        return .seek
+    }
+
+    private var queueHeaderFocus: NowPlayingFocus {
+        player.source == .personalFM ? .favorite : .shuffle
+    }
+
+    private func closePlayer() {
+        onClose()
+    }
+
+    private func handleExitCommand() {
+        // Menu is a distinct command from the Select key that presents this view,
+        // so it is safe—and feels much more responsive—to honor it immediately.
+        guard selectedDetail == nil else { return }
+        if panel == .queue {
+            restorePanelAfterQueue()
+        } else {
+            closePlayer()
+        }
+    }
+
+    private func restorePanelAfterQueue() {
+        panel = panelBeforeQueue
+        panelBeforeQueue = nil
+        focusedQueueID = nil
+        requestControlFocus(.queueMode)
+    }
+
+    @ViewBuilder
+    private func detailCover(_ destination: NowPlayingDetailDestination) -> some View {
+        NavigationStack {
+            Group {
+                switch destination {
+                case .artist(let artist): ArtistDetailView(artistID: artist.id)
+                case .album(let album): AlbumDetailView(albumID: album.id)
+                }
+            }
+                .navigationDestination(for: AppRoute.self) { route in
+                    switch route {
+                    case .playlist(let id): PlaylistDetailView(playlistID: id)
+                    case .album(let id): AlbumDetailView(albumID: id)
+                    case .artist(let id): ArtistDetailView(artistID: id)
+                    case .dailySongs: DailySongsView()
+                    case .recents: RecentPlaysView()
+                    case .cloud: CloudMusicView()
+                    case .settings: PlaybackSettingsView()
+                    }
+                }
+        }
+        .environment(\.openNowPlaying, {
+            selectedDetail = nil
+        })
+    }
+
+    private func restoreDetailFocus() {
+        guard let focus = lastSelectedDetailFocus else { return }
+        Task { @MainActor in
+            await Task.yield()
+            focusedControl = focus
+        }
+    }
+
+}
+
+private struct NowPlayingArtistButtonStyle: ButtonStyle {
+    @Environment(\.isFocused) private var isFocused
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.system(size: 21, weight: .semibold, design: .rounded))
+            .padding(.horizontal, 13)
+            .padding(.vertical, 8)
+            .foregroundStyle(isFocused ? Color.black : Color.white.opacity(0.62))
+            .background(
+                Capsule()
+                    .fill(isFocused ? Color.white : Color.white.opacity(0.08))
+            )
+            .overlay {
+                Capsule()
+                    .stroke(Color.white.opacity(isFocused ? 0.95 : 0.12), lineWidth: isFocused ? 2 : 1)
+            }
+            .scaleEffect(isFocused && !reduceMotion ? 1.06 : (configuration.isPressed ? 0.97 : 1))
+            .animation(reduceMotion ? nil : .easeOut(duration: 0.14), value: isFocused)
+    }
+}
+
+private struct NowPlayingQueueCardStyle: ButtonStyle {
+    @Environment(\.isFocused) private var isFocused
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    let isCurrent: Bool
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .padding(14)
+            .foregroundStyle(isFocused ? Color.black : Color.white)
+            .background {
+                RoundedRectangle(cornerRadius: 28, style: .continuous)
+                    .fill(isFocused ? Color.white : Color.white.opacity(isCurrent ? 0.12 : 0.055))
+            }
+            .overlay {
+                RoundedRectangle(cornerRadius: 28, style: .continuous)
+                    .stroke(
+                        isFocused ? Color.white : (isCurrent ? TVTheme.accent.opacity(0.72) : Color.white.opacity(0.08)),
+                        lineWidth: isFocused || isCurrent ? 3 : 1
+                    )
+            }
+            .scaleEffect(isFocused && !reduceMotion ? 1.055 : (configuration.isPressed ? 0.98 : 1))
+            .shadow(color: .black.opacity(isFocused ? 0.46 : 0.12), radius: isFocused ? 28 : 10, y: isFocused ? 14 : 5)
+            .animation(reduceMotion ? nil : .easeOut(duration: 0.16), value: isFocused)
+    }
+}
+
+private struct TVSeekBar: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    let progress: TimeInterval
+    let duration: TimeInterval
+    let seek: (TimeInterval) -> Void
+    let isEnabled: Bool
+    let focus: FocusState<NowPlayingFocus?>.Binding
+    let moveUp: () -> Void
+
+    var body: some View {
+        let isFocused = focus.wrappedValue == .seek
+        GeometryReader { proxy in
+            let ratio = duration > 0 ? min(max(progress / duration, 0), 1) : 0
+            ZStack(alignment: .leading) {
+                Capsule().fill(Color.white.opacity(isFocused ? 0.34 : 0.22))
+                Capsule()
+                    .fill(isFocused ? Color.white : TVTheme.accent)
+                    .frame(width: proxy.size.width * ratio)
+                Circle()
+                    .fill(.white)
+                    .frame(width: isFocused ? 24 : 10, height: isFocused ? 24 : 10)
+                    .offset(x: max(0, proxy.size.width * ratio - (isFocused ? 12 : 5)))
+                    .shadow(color: .black.opacity(0.42), radius: 6)
+            }
+            .frame(height: isFocused ? 12 : 7)
+            .frame(maxHeight: .infinity)
+        }
+        .frame(height: 34)
+        .contentShape(Rectangle())
+        .focusable(isEnabled)
+        .focused(focus, equals: .seek)
+        .onMoveCommand { direction in
+            switch direction {
+            case .left: seek(progress - 10)
+            case .right: seek(progress + 10)
+            case .up: moveUp()
+            case .down: focus.wrappedValue = .play
+            default: break
+            }
+        }
+        .animation(reduceMotion ? nil : .easeOut(duration: 0.14), value: isFocused)
+        .accessibilityLabel("播放进度")
+        .accessibilityValue("\(DisplayFormatter.duration(progress)) / \(DisplayFormatter.duration(duration))")
+        .accessibilityHint("左右轻扫可快退或快进十秒")
+    }
+}

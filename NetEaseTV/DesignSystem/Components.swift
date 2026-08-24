@@ -1,0 +1,393 @@
+import SwiftUI
+
+struct ArtworkView: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    let url: URL?
+    var cornerRadius: CGFloat = 20
+    var symbol = "music.note"
+
+    var body: some View {
+        GeometryReader { geometry in
+            AsyncImage(
+                url: url,
+                transaction: Transaction(animation: reduceMotion ? nil : .easeOut(duration: 0.25))
+            ) { phase in
+                switch phase {
+                case .success(let image):
+                    image.resizable().scaledToFill()
+                case .empty:
+                    placeholder.overlay { ProgressView().tint(.white.opacity(0.75)) }
+                case .failure:
+                    placeholder
+                @unknown default:
+                    placeholder
+                }
+            }
+            .frame(width: geometry.size.width, height: geometry.size.height)
+            .clipped()
+            .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+            .contentShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+        }
+    }
+
+    private var placeholder: some View {
+        ZStack {
+            LinearGradient(
+                colors: [TVTheme.magenta.opacity(0.85), Color.indigo.opacity(0.75)],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+            Image(systemName: symbol)
+                .font(.system(size: 52, weight: .semibold))
+                .foregroundStyle(.white.opacity(0.8))
+        }
+    }
+}
+
+struct MembershipStatusBadge: View {
+    let label: String
+    let isVIP: Bool
+    var compact = false
+
+    var body: some View {
+        HStack(spacing: compact ? 5 : 7) {
+            Image(systemName: isVIP ? "crown.fill" : "person.fill")
+            Text(label)
+                .lineLimit(1)
+        }
+        .font(.system(size: compact ? 16 : 18, weight: .semibold, design: .rounded))
+        .fixedSize(horizontal: true, vertical: false)
+        .foregroundStyle(isVIP ? TVTheme.amber : Color.white.opacity(0.66))
+        .padding(.horizontal, compact ? 9 : 11)
+        .padding(.vertical, compact ? 4 : 6)
+        .background((isVIP ? TVTheme.amber : Color.white).opacity(isVIP ? 0.14 : 0.08), in: Capsule())
+        .overlay {
+            Capsule()
+                .stroke((isVIP ? TVTheme.amber : Color.white).opacity(isVIP ? 0.46 : 0.14), lineWidth: 1)
+        }
+    }
+}
+
+struct SectionTitle: View {
+    let title: String
+    var subtitle: String?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Text(title)
+                .font(.system(size: 32, weight: .bold, design: .rounded))
+            if let subtitle {
+                Text(subtitle)
+                    .font(.headline)
+                    .foregroundStyle(TVTheme.secondaryText)
+            }
+        }
+        .padding(.horizontal, TVTheme.horizontalPadding)
+    }
+}
+
+struct PlaylistCard: View {
+    let playlist: PlaylistSummary
+    var width: CGFloat = 265
+
+    var body: some View {
+        NavigationLink(value: AppRoute.playlist(playlist.id)) {
+            VStack(alignment: .leading, spacing: 13) {
+                ArtworkView(url: playlist.artworkURL)
+                    .frame(width: width, height: width)
+                Text(playlist.name)
+                    .font(.headline)
+                    .lineLimit(1)
+                HStack(spacing: 6) {
+                    Image(systemName: "play.fill")
+                    Text(DisplayFormatter.playCount(playlist.playCount))
+                }
+                .font(.caption)
+                .opacity(0.62)
+            }
+            .frame(width: width, alignment: .leading)
+        }
+        .buttonStyle(TVCardButtonStyle())
+    }
+}
+
+struct AlbumCard: View {
+    let album: AlbumSummary
+    var width: CGFloat = 250
+
+    var body: some View {
+        NavigationLink(value: AppRoute.album(album.id)) {
+            VStack(alignment: .leading, spacing: 12) {
+                ArtworkView(url: album.artworkURL)
+                    .frame(width: width, height: width)
+                Text(album.name)
+                    .font(.headline)
+                    .lineLimit(1)
+                Text([album.artistNames, DisplayFormatter.year(album.publishTime)].compactMap { value in
+                    value?.isEmpty == false ? value : nil
+                }.joined(separator: " · "))
+                    .font(.caption)
+                    .opacity(0.62)
+                    .lineLimit(1)
+            }
+            .frame(width: width, alignment: .leading)
+        }
+        .buttonStyle(TVCardButtonStyle())
+    }
+}
+
+struct ArtistCard: View {
+    let artist: ArtistSummary
+    var size: CGFloat = 220
+
+    var body: some View {
+        NavigationLink(value: AppRoute.artist(artist.id)) {
+            VStack(spacing: 14) {
+                ArtworkView(url: artist.artworkURL, cornerRadius: size / 2, symbol: "person.wave.2")
+                    .frame(width: size, height: size)
+                Text(artist.name)
+                    .font(.system(size: 28, weight: .semibold, design: .rounded))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
+                    .padding(.horizontal, 6)
+            }
+            .frame(width: size)
+        }
+        .buttonStyle(TVCardButtonStyle(cornerRadius: 28))
+    }
+}
+
+struct TrackCard: View {
+    @Environment(\.openNowPlaying) private var openNowPlaying
+    @Environment(AccountStore.self) private var account
+    @Environment(PlayerService.self) private var player
+
+    let track: Track
+    let tracks: [Track]
+    let source: PlaySource
+    var width: CGFloat = 250
+
+    var body: some View {
+        Button {
+            player.play(tracks, source: source, startingAt: track)
+            openNowPlaying?()
+        } label: {
+            VStack(alignment: .leading, spacing: 12) {
+                ArtworkView(url: track.artworkURL)
+                    .frame(width: width, height: width)
+                Text(track.name)
+                    .font(.headline)
+                    .lineLimit(1)
+                Text(track.artistNames)
+                    .font(.caption)
+                    .opacity(0.62)
+                    .lineLimit(1)
+            }
+            .frame(width: width, alignment: .leading)
+        }
+        .buttonStyle(TVCardButtonStyle())
+        .contextMenu {
+            Button("下一首播放") { player.playNext(track) }
+            Button("添加到队列") { player.addToQueue(track) }
+            if let playlistID = source.playlistID,
+               playlistID == account.likedSongsPlaylist?.id,
+               !track.noCopyright {
+                Button("从这首开启心动模式") {
+                    player.startIntelligence(from: track, playlistID: playlistID) {
+                        openNowPlaying?()
+                    }
+                }
+            }
+            if !account.ownedPlaylists.isEmpty {
+                Menu("添加到歌单") {
+                    ForEach(account.ownedPlaylists) { playlist in
+                        Button(playlist.name) {
+                            Task { await account.add(track, to: playlist) }
+                        }
+                    }
+                }
+            }
+            Button(account.isLiked(track) ? "取消喜欢" : "喜欢") {
+                Task { await account.toggleLike(track) }
+            }
+        }
+    }
+}
+
+struct TrackRow: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.openNowPlaying) private var openNowPlaying
+    @Environment(AccountStore.self) private var account
+    @Environment(PlayerService.self) private var player
+
+    let track: Track
+    let index: Int
+    let tracks: [Track]
+    let source: PlaySource
+    var cloudMatchAction: (() -> Void)?
+    var cloudDeleteAction: (() -> Void)?
+
+    var body: some View {
+        Button {
+            player.play(tracks, source: source, startingAt: track)
+            openNowPlaying?()
+        } label: {
+            HStack(spacing: 18) {
+                ZStack {
+                    if player.currentTrack?.id == track.id && player.isPlaying {
+                        Image(systemName: "waveform")
+                            .foregroundStyle(TVTheme.accent)
+                            .symbolEffect(.variableColor.iterative, isActive: !reduceMotion)
+                    } else {
+                        Text("\(index + 1)")
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.72)
+                            .opacity(0.62)
+                    }
+                }
+                .font(.system(size: 27, weight: .medium, design: .rounded).monospacedDigit())
+                .frame(width: 56)
+
+                ArtworkView(url: track.artworkURL, cornerRadius: 10)
+                    .frame(width: 60, height: 60)
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(spacing: 9) {
+                        Text(track.name)
+                            .font(.system(size: 30, weight: .semibold, design: .rounded))
+                            .lineLimit(1)
+                        if track.fee == 1 {
+                            Text("VIP")
+                                .font(.caption2.bold())
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 2)
+                                .foregroundStyle(TVTheme.accent)
+                                .overlay(Capsule().stroke(TVTheme.accent.opacity(0.7)))
+                        }
+                        if track.noCopyright {
+                            Text("无版权")
+                                .font(.caption2.bold())
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 2)
+                                .foregroundStyle(.white.opacity(0.56))
+                                .overlay(Capsule().stroke(Color.white.opacity(0.24)))
+                        }
+                    }
+                    Text(track.artistNames + (track.album.name.isEmpty ? "" : " · \(track.album.name)"))
+                        .font(.system(size: 22, weight: .regular, design: .rounded))
+                        .opacity(0.62)
+                        .lineLimit(1)
+                }
+                Spacer()
+                Text(DisplayFormatter.duration(track.duration))
+                    .font(.system(size: 24, weight: .regular, design: .rounded).monospacedDigit())
+                    .lineLimit(1)
+                    .opacity(0.62)
+            }
+            .padding(.horizontal, 18)
+            .frame(height: 82)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(TrackRowButtonStyle())
+        .contextMenu {
+            Button("立即播放") {
+                player.play(tracks, source: source, startingAt: track)
+                openNowPlaying?()
+            }
+            Button("下一首播放") { player.playNext(track) }
+            Button("添加到队列") { player.addToQueue(track) }
+            if let playlistID = source.playlistID,
+               playlistID == account.likedSongsPlaylist?.id,
+               !track.noCopyright {
+                Button("从这首开启心动模式") {
+                    player.startIntelligence(from: track, playlistID: playlistID) {
+                        openNowPlaying?()
+                    }
+                }
+            }
+            if !account.ownedPlaylists.isEmpty {
+                Menu("添加到歌单") {
+                    ForEach(account.ownedPlaylists) { playlist in
+                        Button(playlist.name) {
+                            Task { await account.add(track, to: playlist) }
+                        }
+                    }
+                }
+            }
+            Button(account.isLiked(track) ? "取消喜欢" : "喜欢") {
+                Task { await account.toggleLike(track) }
+            }
+            if let playlistID = source.playlistID,
+               let playlist = account.ownedPlaylists.first(where: { $0.id == playlistID }) {
+                Button("从《\(playlist.name)》中移除", role: .destructive) {
+                    Task { await account.remove(track, from: playlist) }
+                }
+            }
+            if let cloudMatchAction {
+                Button("匹配网易云歌曲", systemImage: "link") { cloudMatchAction() }
+            }
+            if let cloudDeleteAction {
+                Button("从云盘删除", systemImage: "trash", role: .destructive) {
+                    cloudDeleteAction()
+                }
+            }
+        }
+    }
+}
+
+struct TrackRowButtonStyle: ButtonStyle {
+    @Environment(\.isFocused) private var isFocused
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .background(
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .fill(isFocused ? Color.white : TVTheme.surface)
+            )
+            .overlay {
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .stroke(Color.white.opacity(isFocused ? 0.95 : 0.08), lineWidth: isFocused ? 3 : 1)
+            }
+            .foregroundStyle(isFocused ? Color.black : Color.white)
+            .scaleEffect(isFocused && !reduceMotion ? 1.015 : (configuration.isPressed ? 0.99 : 1))
+            .shadow(color: .black.opacity(isFocused ? 0.3 : 0), radius: 18, y: 8)
+            .animation(reduceMotion ? nil : .easeOut(duration: 0.16), value: isFocused)
+    }
+}
+
+struct HorizontalShelf<Content: View>: View {
+    let title: String
+    var subtitle: String?
+    @ViewBuilder let content: Content
+
+    init(title: String, subtitle: String? = nil, @ViewBuilder content: () -> Content) {
+        self.title = title
+        self.subtitle = subtitle
+        self.content = content()
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            SectionTitle(title: title, subtitle: subtitle)
+            ScrollView(.horizontal, showsIndicators: false) {
+                LazyHStack(alignment: .top, spacing: 34) {
+                    content
+                }
+                .padding(.horizontal, TVTheme.horizontalPadding)
+                .padding(.vertical, 24)
+            }
+        }
+        .focusSection()
+    }
+}
+
+enum AppRoute: Hashable {
+    case playlist(Int)
+    case album(Int)
+    case artist(Int)
+    case dailySongs
+    case recents
+    case cloud
+    case settings
+}

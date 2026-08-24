@@ -1,0 +1,355 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 56;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		B00000000000000000000001 /* NetEaseTVApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000001 /* NetEaseTVApp.swift */; };
+		B00000000000000000000002 /* AppShellView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000002 /* AppShellView.swift */; };
+		B00000000000000000000003 /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000003 /* Models.swift */; };
+		B00000000000000000000004 /* LyricsParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000004 /* LyricsParser.swift */; };
+		B00000000000000000000005 /* NeteaseCrypto.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000005 /* NeteaseCrypto.swift */; };
+		B00000000000000000000006 /* NeteaseClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000006 /* NeteaseClient.swift */; };
+		B00000000000000000000007 /* NeteaseAPI.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000007 /* NeteaseAPI.swift */; };
+		B00000000000000000000008 /* AccountStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000008 /* AccountStore.swift */; };
+		B00000000000000000000009 /* PlayerService.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000009 /* PlayerService.swift */; };
+		B00000000000000000000010 /* Theme.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000010 /* Theme.swift */; };
+		B00000000000000000000011 /* Components.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000011 /* Components.swift */; };
+		B00000000000000000000013 /* LoginView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000013 /* LoginView.swift */; };
+		B00000000000000000000014 /* HomeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000014 /* HomeView.swift */; };
+		B00000000000000000000015 /* BrowseView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000015 /* BrowseView.swift */; };
+		B00000000000000000000016 /* SearchView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000016 /* SearchView.swift */; };
+		B00000000000000000000017 /* LibraryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000017 /* LibraryView.swift */; };
+		B00000000000000000000018 /* DetailViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000018 /* DetailViews.swift */; };
+		B00000000000000000000019 /* NowPlayingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000019 /* NowPlayingView.swift */; };
+		B00000000000000000000020 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000020 /* Assets.xcassets */; };
+		B00000000000000000000021 /* AppIcon-v2.png in Resources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000023 /* AppIcon-v2.png */; };
+		B00000000000000000000022 /* UnblockService.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000024 /* UnblockService.swift */; };
+		B00000000000000000000023 /* MediaTransferService.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000025 /* MediaTransferService.swift */; };
+		B00000000000000000000024 /* ManagementViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000026 /* ManagementViews.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		F00000000000000000000001 /* NetEaseTVApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NetEaseTVApp.swift; sourceTree = "<group>"; };
+		F00000000000000000000002 /* AppShellView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppShellView.swift; sourceTree = "<group>"; };
+		F00000000000000000000003 /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
+		F00000000000000000000004 /* LyricsParser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LyricsParser.swift; sourceTree = "<group>"; };
+		F00000000000000000000005 /* NeteaseCrypto.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NeteaseCrypto.swift; sourceTree = "<group>"; };
+		F00000000000000000000006 /* NeteaseClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NeteaseClient.swift; sourceTree = "<group>"; };
+		F00000000000000000000007 /* NeteaseAPI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NeteaseAPI.swift; sourceTree = "<group>"; };
+		F00000000000000000000008 /* AccountStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccountStore.swift; sourceTree = "<group>"; };
+		F00000000000000000000009 /* PlayerService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlayerService.swift; sourceTree = "<group>"; };
+		F00000000000000000000010 /* Theme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Theme.swift; sourceTree = "<group>"; };
+		F00000000000000000000011 /* Components.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Components.swift; sourceTree = "<group>"; };
+		F00000000000000000000013 /* LoginView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LoginView.swift; sourceTree = "<group>"; };
+		F00000000000000000000014 /* HomeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HomeView.swift; sourceTree = "<group>"; };
+		F00000000000000000000015 /* BrowseView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrowseView.swift; sourceTree = "<group>"; };
+		F00000000000000000000016 /* SearchView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SearchView.swift; sourceTree = "<group>"; };
+		F00000000000000000000017 /* LibraryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LibraryView.swift; sourceTree = "<group>"; };
+		F00000000000000000000018 /* DetailViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DetailViews.swift; sourceTree = "<group>"; };
+		F00000000000000000000019 /* NowPlayingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NowPlayingView.swift; sourceTree = "<group>"; };
+		F00000000000000000000020 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		F00000000000000000000021 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		F00000000000000000000022 /* NetEaseTV.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = NetEaseTV.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		F00000000000000000000023 /* AppIcon-v2.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "AppIcon-v2.png"; sourceTree = "<group>"; };
+		F00000000000000000000024 /* UnblockService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UnblockService.swift; sourceTree = "<group>"; };
+		F00000000000000000000025 /* MediaTransferService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MediaTransferService.swift; sourceTree = "<group>"; };
+		F00000000000000000000026 /* ManagementViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ManagementViews.swift; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		D00000000000000000000001 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		E00000000000000000000001 = {
+			isa = PBXGroup;
+			children = (
+				E00000000000000000000002 /* NetEaseTV */,
+				E00000000000000000000008 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		E00000000000000000000002 /* NetEaseTV */ = {
+			isa = PBXGroup;
+			children = (
+				E00000000000000000000003 /* App */,
+				E00000000000000000000004 /* Core */,
+				E00000000000000000000005 /* DesignSystem */,
+				E00000000000000000000006 /* Features */,
+				E00000000000000000000007 /* Resources */,
+			);
+			path = NetEaseTV;
+			sourceTree = "<group>";
+		};
+		E00000000000000000000003 /* App */ = {
+			isa = PBXGroup;
+			children = (
+				F00000000000000000000001 /* NetEaseTVApp.swift */,
+				F00000000000000000000002 /* AppShellView.swift */,
+			);
+			path = App;
+			sourceTree = "<group>";
+		};
+		E00000000000000000000004 /* Core */ = {
+			isa = PBXGroup;
+			children = (
+				F00000000000000000000003 /* Models.swift */,
+				F00000000000000000000004 /* LyricsParser.swift */,
+				F00000000000000000000005 /* NeteaseCrypto.swift */,
+				F00000000000000000000006 /* NeteaseClient.swift */,
+				F00000000000000000000007 /* NeteaseAPI.swift */,
+				F00000000000000000000008 /* AccountStore.swift */,
+				F00000000000000000000009 /* PlayerService.swift */,
+				F00000000000000000000024 /* UnblockService.swift */,
+				F00000000000000000000025 /* MediaTransferService.swift */,
+			);
+			path = Core;
+			sourceTree = "<group>";
+		};
+		E00000000000000000000005 /* DesignSystem */ = {
+			isa = PBXGroup;
+			children = (
+				F00000000000000000000010 /* Theme.swift */,
+				F00000000000000000000011 /* Components.swift */,
+			);
+			path = DesignSystem;
+			sourceTree = "<group>";
+		};
+		E00000000000000000000006 /* Features */ = {
+			isa = PBXGroup;
+			children = (
+				F00000000000000000000013 /* LoginView.swift */,
+				F00000000000000000000014 /* HomeView.swift */,
+				F00000000000000000000015 /* BrowseView.swift */,
+				F00000000000000000000016 /* SearchView.swift */,
+				F00000000000000000000017 /* LibraryView.swift */,
+				F00000000000000000000018 /* DetailViews.swift */,
+				F00000000000000000000019 /* NowPlayingView.swift */,
+				F00000000000000000000026 /* ManagementViews.swift */,
+			);
+			path = Features;
+			sourceTree = "<group>";
+		};
+		E00000000000000000000007 /* Resources */ = {
+			isa = PBXGroup;
+			children = (
+				F00000000000000000000020 /* Assets.xcassets */,
+				F00000000000000000000023 /* AppIcon-v2.png */,
+				F00000000000000000000021 /* Info.plist */,
+			);
+			path = Resources;
+			sourceTree = "<group>";
+		};
+		E00000000000000000000008 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				F00000000000000000000022 /* NetEaseTV.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		A00000000000000000000002 /* NetEaseTV */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = A00000000000000000000006 /* Build configuration list for PBXNativeTarget "NetEaseTV" */;
+			buildPhases = (
+				D00000000000000000000002 /* Sources */,
+				D00000000000000000000001 /* Frameworks */,
+				D00000000000000000000003 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = NetEaseTV;
+			productName = NetEaseTV;
+			productReference = F00000000000000000000022 /* NetEaseTV.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		A00000000000000000000001 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 2650;
+				LastUpgradeCheck = 2650;
+				TargetAttributes = {
+					A00000000000000000000002 = {
+						CreatedOnToolsVersion = 26.5;
+					};
+				};
+			};
+			buildConfigurationList = A00000000000000000000003 /* Build configuration list for PBXProject "NetEaseTV" */;
+			compatibilityVersion = "Xcode 14.0";
+			developmentRegion = zh_CN;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				Base,
+				en,
+				zh_CN,
+			);
+			mainGroup = E00000000000000000000001;
+			productRefGroup = E00000000000000000000008 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				A00000000000000000000002 /* NetEaseTV */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		D00000000000000000000003 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				B00000000000000000000020 /* Assets.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		D00000000000000000000002 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				B00000000000000000000001 /* NetEaseTVApp.swift in Sources */,
+				B00000000000000000000002 /* AppShellView.swift in Sources */,
+				B00000000000000000000003 /* Models.swift in Sources */,
+				B00000000000000000000004 /* LyricsParser.swift in Sources */,
+				B00000000000000000000005 /* NeteaseCrypto.swift in Sources */,
+				B00000000000000000000006 /* NeteaseClient.swift in Sources */,
+				B00000000000000000000007 /* NeteaseAPI.swift in Sources */,
+				B00000000000000000000008 /* AccountStore.swift in Sources */,
+				B00000000000000000000009 /* PlayerService.swift in Sources */,
+				B00000000000000000000022 /* UnblockService.swift in Sources */,
+				B00000000000000000000023 /* MediaTransferService.swift in Sources */,
+				B00000000000000000000010 /* Theme.swift in Sources */,
+				B00000000000000000000011 /* Components.swift in Sources */,
+				B00000000000000000000013 /* LoginView.swift in Sources */,
+				B00000000000000000000014 /* HomeView.swift in Sources */,
+				B00000000000000000000015 /* BrowseView.swift in Sources */,
+				B00000000000000000000016 /* SearchView.swift in Sources */,
+				B00000000000000000000017 /* LibraryView.swift in Sources */,
+				B00000000000000000000018 /* DetailViews.swift in Sources */,
+				B00000000000000000000019 /* NowPlayingView.swift in Sources */,
+				B00000000000000000000024 /* ManagementViews.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		A00000000000000000000004 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				ENABLE_TESTABILITY = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				ONLY_ACTIVE_ARCH = YES;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+			};
+			name = Debug;
+		};
+		A00000000000000000000005 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				SWIFT_COMPILATION_MODE = wholemodule;
+			};
+			name = Release;
+		};
+		A00000000000000000000007 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = "App Icon & Top Shelf Image";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 2;
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = NetEaseTV/Resources/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 0.2.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.gee1k.neteasetv;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = appletvos;
+				SUPPORTED_PLATFORMS = "appletvos appletvsimulator";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 3;
+				TVOS_DEPLOYMENT_TARGET = 17.0;
+			};
+			name = Debug;
+		};
+		A00000000000000000000008 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = "App Icon & Top Shelf Image";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 2;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = NetEaseTV/Resources/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 0.2.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.gee1k.neteasetv;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = appletvos;
+				SUPPORTED_PLATFORMS = "appletvos appletvsimulator";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 3;
+				TVOS_DEPLOYMENT_TARGET = 17.0;
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		A00000000000000000000003 /* Build configuration list for PBXProject "NetEaseTV" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				A00000000000000000000004 /* Debug */,
+				A00000000000000000000005 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		A00000000000000000000006 /* Build configuration list for PBXNativeTarget "NetEaseTV" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				A00000000000000000000007 /* Debug */,
+				A00000000000000000000008 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = A00000000000000000000001 /* Project object */;
+}
