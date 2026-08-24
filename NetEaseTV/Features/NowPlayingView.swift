@@ -50,6 +50,7 @@ struct NowPlayingView: View {
     @State private var acceptsPanelActivation = false
     @State private var controlsReady = false
     @FocusState private var focusedControl: NowPlayingFocus?
+    @FocusState private var focusedLyricID: Int?
     @FocusState private var focusedQueueID: Int?
 
     init(onClose: @escaping () -> Void) {
@@ -79,6 +80,7 @@ struct NowPlayingView: View {
         .onAppear {
             acceptsPanelActivation = false
             controlsReady = false
+            focusedLyricID = nil
             focusedQueueID = nil
             focusedControl = initialControlFocus
         }
@@ -102,6 +104,7 @@ struct NowPlayingView: View {
             controlsReady = true
         }
         .onChange(of: player.currentTrack?.id) { oldID, newID in
+            focusedLyricID = nil
             if oldID == nil, newID != nil {
                 requestControlFocus(.play)
             } else if newID == nil {
@@ -482,32 +485,55 @@ struct NowPlayingView: View {
                     ScrollView(showsIndicators: false) {
                         LazyVStack(alignment: .leading, spacing: 34) {
                             Color.clear.frame(height: 210)
-                            ForEach(lines) { line in
+                            ForEach(Array(lines.enumerated()), id: \.element.id) { index, line in
                                 let active = line.id == player.activeLyricIndex
-                                VStack(alignment: .leading, spacing: 9) {
-                                    Text(line.text.isEmpty ? "♪" : line.text)
-                                        .font(.system(
-                                            size: active ? 48 : 36,
-                                            weight: active ? .bold : .semibold,
-                                            design: .rounded
-                                        ))
-                                    if player.showsTranslatedLyrics,
-                                       let translation = line.translation, !translation.isEmpty {
-                                        Text(translation)
-                                            .font(.system(size: active ? 25 : 21, weight: .semibold, design: .rounded))
-                                            .foregroundStyle(active ? .white.opacity(0.78) : .white.opacity(0.32))
+                                let focused = focusedLyricID == line.id
+                                Button {
+                                    player.seek(to: line.time)
+                                } label: {
+                                    VStack(alignment: .leading, spacing: 9) {
+                                        Text(line.text.isEmpty ? "♪" : line.text)
+                                            .font(.system(
+                                                size: active ? 48 : 36,
+                                                weight: active ? .bold : .semibold,
+                                                design: .rounded
+                                            ))
+                                        if player.showsTranslatedLyrics,
+                                           let translation = line.translation, !translation.isEmpty {
+                                            Text(translation)
+                                                .font(.system(size: active ? 25 : 21, weight: .semibold, design: .rounded))
+                                                .foregroundStyle(lyricSecondaryColor(active: active, focused: focused, emphasis: 0.78))
+                                        }
+                                        if player.showsTranslatedLyrics,
+                                           let romaji = line.romaji, !romaji.isEmpty {
+                                            Text(romaji)
+                                                .font(.headline)
+                                                .foregroundStyle(lyricSecondaryColor(active: active, focused: focused, emphasis: 0.54))
+                                        }
                                     }
-                                    if player.showsTranslatedLyrics,
-                                       let romaji = line.romaji, !romaji.isEmpty {
-                                        Text(romaji)
-                                            .font(.headline)
-                                            .foregroundStyle(.white.opacity(active ? 0.54 : 0.24))
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                }
+                                .buttonStyle(NowPlayingLyricButtonStyle(isActive: active))
+                                .focused($focusedLyricID, equals: line.id)
+                                .accessibilityLabel(line.text.isEmpty ? "音乐间奏" : line.text)
+                                .accessibilityValue(DisplayFormatter.duration(line.time))
+                                .accessibilityHint("按下可从这句歌词开始播放")
+                                .onMoveCommand { direction in
+                                    switch direction {
+                                    case .up where index > lines.startIndex:
+                                        requestLyricFocus(lines[index - 1].id)
+                                    case .up:
+                                        requestControlFocus(.close)
+                                    case .down where index < lines.index(before: lines.endIndex):
+                                        requestLyricFocus(lines[index + 1].id)
+                                    case .down:
+                                        requestControlFocus(.seek)
+                                    case .left:
+                                        requestControlFocus(metadataFocusBelowActions)
+                                    default:
+                                        break
                                     }
                                 }
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .foregroundStyle(active ? .white : .white.opacity(0.30))
-                                .scaleEffect(active || reduceMotion ? 1 : 0.975, anchor: .leading)
-                                .animation(reduceMotion ? nil : .easeOut(duration: 0.24), value: active)
                                 .id(line.id)
                             }
                             Color.clear.frame(height: 230)
@@ -530,7 +556,7 @@ struct NowPlayingView: View {
                         proxy.scrollTo(index, anchor: .center)
                     }
                     .onChange(of: player.activeLyricIndex) { _, index in
-                        guard let index else { return }
+                        guard focusedLyricID == nil, let index else { return }
                         if reduceMotion {
                             proxy.scrollTo(index, anchor: .center)
                         } else {
@@ -850,6 +876,8 @@ struct NowPlayingView: View {
             guard direction == .up else { return }
             if target == .queue, panel == .queue, let currentID = player.currentTrack?.id {
                 requestQueueFocus(currentID)
+            } else if target == .lyrics, panel == .lyrics, focusActiveLyric() {
+                return
             } else if target == .lyrics, player.lyricsErrorMessage != nil {
                 requestControlFocus(.lyricsRetry)
             } else {
@@ -861,6 +889,8 @@ struct NowPlayingView: View {
     private func moveFocusAboveTimeline() {
         if panel == .queue, let currentID = player.currentTrack?.id {
             requestQueueFocus(currentID)
+        } else if panel == .lyrics, focusActiveLyric() {
+            return
         } else {
             requestControlFocus(metadataFocusBelowActions)
         }
@@ -878,6 +908,7 @@ struct NowPlayingView: View {
     private func requestControlFocus(_ target: NowPlayingFocus) {
         Task { @MainActor in
             await Task.yield()
+            focusedLyricID = nil
             focusedQueueID = nil
             focusedControl = target
         }
@@ -887,8 +918,33 @@ struct NowPlayingView: View {
         Task { @MainActor in
             await Task.yield()
             focusedControl = nil
+            focusedLyricID = nil
             focusedQueueID = trackID
         }
+    }
+
+    private func requestLyricFocus(_ lineID: Int) {
+        Task { @MainActor in
+            await Task.yield()
+            focusedControl = nil
+            focusedQueueID = nil
+            focusedLyricID = lineID
+        }
+    }
+
+    @discardableResult
+    private func focusActiveLyric() -> Bool {
+        guard let lines = player.lyrics?.lines, !lines.isEmpty else { return false }
+        let lineID = player.activeLyricIndex
+            .flatMap { lines.indices.contains($0) ? lines[$0].id : nil }
+            ?? lines[0].id
+        requestLyricFocus(lineID)
+        return true
+    }
+
+    private func lyricSecondaryColor(active: Bool, focused: Bool, emphasis: Double) -> Color {
+        if focused { return .white.opacity(active ? 0.88 : 0.72) }
+        return .white.opacity(active ? emphasis : max(0.24, emphasis * 0.42))
     }
 
     private var initialControlFocus: NowPlayingFocus {
@@ -984,6 +1040,31 @@ struct NowPlayingView: View {
         }
     }
 
+}
+
+private struct NowPlayingLyricButtonStyle: ButtonStyle {
+    @Environment(\.isFocused) private var isFocused
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    let isActive: Bool
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .padding(.horizontal, 18)
+            .padding(.vertical, 12)
+            .foregroundStyle(isFocused || isActive ? Color.white : Color.white.opacity(0.30))
+            .background {
+                RoundedRectangle(cornerRadius: 20, style: .continuous)
+                    .fill(Color.white.opacity(isFocused ? 0.13 : 0))
+            }
+            .overlay {
+                RoundedRectangle(cornerRadius: 20, style: .continuous)
+                    .stroke(Color.white.opacity(isFocused ? 0.28 : 0), lineWidth: 2)
+            }
+            .scaleEffect(isFocused && !reduceMotion ? 1.025 : (configuration.isPressed ? 0.985 : 1), anchor: .leading)
+            .shadow(color: .black.opacity(isFocused ? 0.24 : 0), radius: 16, y: 8)
+            .animation(reduceMotion ? nil : .easeOut(duration: 0.15), value: isFocused)
+            .animation(reduceMotion ? nil : .easeOut(duration: 0.24), value: isActive)
+    }
 }
 
 private struct NowPlayingArtistButtonStyle: ButtonStyle {
