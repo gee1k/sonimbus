@@ -4,6 +4,7 @@ struct HomeView: View {
     @Environment(\.openNowPlaying) private var openNowPlaying
     @Environment(\.navigationFocusRestorationGeneration) private var focusRestorationGeneration
     @Environment(\.navigationFocusRestorationRoute) private var focusRestorationRoute
+    @Environment(\.rootTabActivationGeneration) private var rootTabActivationGeneration
     @Environment(AccountStore.self) private var account
     @Environment(PlayerService.self) private var player
 
@@ -72,10 +73,15 @@ struct HomeView: View {
                 await restoreNavigationFocus(using: proxy)
             }
         }
+        .id(rootTabActivationGeneration)
         .fullScreenCover(isPresented: $showLogin) { LoginView() }
         .task(id: account.profile?.userId) { await load() }
         .onChange(of: focusedRoute) { _, route in
             if let route { lastFocusedRoute = route }
+        }
+        .onChange(of: rootTabActivationGeneration) { _, _ in
+            focusedRoute = nil
+            lastFocusedRoute = nil
         }
     }
 
@@ -192,7 +198,7 @@ struct HomeView: View {
 
     @MainActor
     private func restoreNavigationFocus(using proxy: ScrollViewProxy) async {
-        guard let route = focusRestorationRoute ?? lastFocusedRoute else { return }
+        guard let route = focusRestorationRoute else { return }
         try? await Task.sleep(for: .milliseconds(80))
         guard !Task.isCancelled else { return }
         withAnimation(.easeOut(duration: 0.18)) {

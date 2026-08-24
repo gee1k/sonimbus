@@ -26,6 +26,7 @@ struct BrowseView: View {
 
     @Environment(\.navigationFocusRestorationGeneration) private var focusRestorationGeneration
     @Environment(\.navigationFocusRestorationRoute) private var focusRestorationRoute
+    @Environment(\.rootTabActivationGeneration) private var rootTabActivationGeneration
 
     @State private var isLoading = true
     @State private var errorMessage: String?
@@ -189,9 +190,14 @@ struct BrowseView: View {
                 await restoreNavigationFocus(using: proxy)
             }
         }
+        .id(rootTabActivationGeneration)
         .task(id: "\(category)-\(order)") { await load() }
         .onChange(of: focusedRoute) { _, route in
             if let route { lastFocusedRoute = route }
+        }
+        .onChange(of: rootTabActivationGeneration) { _, _ in
+            focusedRoute = nil
+            lastFocusedRoute = nil
         }
     }
 
@@ -201,7 +207,7 @@ struct BrowseView: View {
 
     @MainActor
     private func restoreNavigationFocus(using proxy: ScrollViewProxy) async {
-        guard let route = focusRestorationRoute ?? lastFocusedRoute else { return }
+        guard let route = focusRestorationRoute else { return }
         focusedRoute = nil
         try? await Task.sleep(for: .milliseconds(80))
         guard !Task.isCancelled else { return }

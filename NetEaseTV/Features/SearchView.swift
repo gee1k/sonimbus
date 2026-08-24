@@ -19,6 +19,7 @@ private enum SearchFocus: Hashable {
 struct SearchView: View {
     @Environment(\.navigationFocusRestorationGeneration) private var focusRestorationGeneration
     @Environment(\.navigationFocusRestorationRoute) private var focusRestorationRoute
+    @Environment(\.rootTabActivationGeneration) private var rootTabActivationGeneration
     @Environment(PlayerService.self) private var player
 
     @Bindable var session: SearchSession
@@ -86,6 +87,7 @@ struct SearchView: View {
                 }
             }
         }
+        .id(rootTabActivationGeneration)
         .background(TVBackground(tint: TVTheme.magenta))
         .onAppear {
             loadRecentQueries()
@@ -94,6 +96,12 @@ struct SearchView: View {
         .task { await loadSuggestedQuery() }
         .onChange(of: focusedResultID) { _, id in
             if let id { lastFocusedResultID = id }
+        }
+        .onChange(of: rootTabActivationGeneration) { _, _ in
+            focusedSearchControl = nil
+            focusedResultID = nil
+            lastFocusedResultID = nil
+            pendingResultFocusID = nil
         }
         .onChange(of: query) { _, value in
             guard value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
@@ -323,7 +331,7 @@ struct SearchView: View {
         case .playlist(let id), .album(let id), .artist(let id), .mv(let id): id
         default: nil
         }
-        guard let id = routeID ?? lastFocusedResultID else { return }
+        guard let id = routeID else { return }
         try? await Task.sleep(for: .milliseconds(80))
         guard !Task.isCancelled else { return }
         focusedResultID = nil

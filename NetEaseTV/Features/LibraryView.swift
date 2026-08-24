@@ -3,6 +3,7 @@ import SwiftUI
 struct LibraryView: View {
     @Environment(\.navigationFocusRestorationGeneration) private var focusRestorationGeneration
     @Environment(\.navigationFocusRestorationRoute) private var focusRestorationRoute
+    @Environment(\.rootTabActivationGeneration) private var rootTabActivationGeneration
     @Environment(AccountStore.self) private var account
     @State private var showLogin = false
     @State private var isRefreshing = false
@@ -34,6 +35,10 @@ struct LibraryView: View {
         .fullScreenCover(isPresented: $showCreatePlaylist) { CreatePlaylistView() }
         .onChange(of: focusedRoute) { _, route in
             if let route { lastFocusedRoute = route }
+        }
+        .onChange(of: rootTabActivationGeneration) { _, _ in
+            focusedRoute = nil
+            lastFocusedRoute = nil
         }
         .alert("退出网易云音乐？", isPresented: $showLogoutConfirmation) {
             Button("取消", role: .cancel) {}
@@ -190,6 +195,7 @@ struct LibraryView: View {
                 await restoreNavigationFocus(using: proxy)
             }
         }
+        .id(rootTabActivationGeneration)
     }
 
     private var profileHeader: some View {
@@ -254,7 +260,7 @@ struct LibraryView: View {
 
     @MainActor
     private func restoreNavigationFocus(using proxy: ScrollViewProxy) async {
-        guard let route = focusRestorationRoute ?? lastFocusedRoute else { return }
+        guard let route = focusRestorationRoute else { return }
         try? await Task.sleep(for: .milliseconds(80))
         guard !Task.isCancelled else { return }
         withAnimation(.easeOut(duration: 0.18)) {
