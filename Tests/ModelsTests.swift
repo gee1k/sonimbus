@@ -19,6 +19,23 @@ func matchesAlternativeTrackByDuration() {
     #expect(UnblockService.preferredMatchIndex(durationsMS: [], targetDurationMS: 200_000) == nil)
     #expect(UnblockService.streamDurationIsPlausible(269.4, target: 269))
     #expect(!UnblockService.streamDurationIsPlausible(11.31, target: 269))
+    #expect(UnblockService.automaticRetrySources == ["GD 音乐台", "波点音乐", "酷狗音乐"])
+    #expect(!UnblockService.automaticRetrySources.contains("酷我音乐"))
+}
+
+@Test("歌曲解锁关闭后隐藏不可用歌曲")
+func filtersUnavailableTracksWhenSongUnlockIsOff() throws {
+    let playable = try JSONDecoder().decode(
+        Track.self,
+        from: Data(#"{"id":1,"name":"可播放","ar":[],"al":{"id":0,"name":""},"dt":1000,"privilege":{"id":1,"st":0,"pl":320000}}"#.utf8)
+    )
+    let unavailable = try JSONDecoder().decode(
+        Track.self,
+        from: Data(#"{"id":2,"name":"不可用","ar":[],"al":{"id":0,"name":""},"dt":1000,"privilege":{"id":2,"st":-200,"pl":0}}"#.utf8)
+    )
+
+    #expect(SongUnlockPolicy.visibleTracks([playable, unavailable], isEnabled: true).map(\.id) == [1, 2])
+    #expect(SongUnlockPolicy.visibleTracks([playable, unavailable], isEnabled: false).map(\.id) == [1])
 }
 
 @Test("云盘上传接口兼容字符串与数字 ID")

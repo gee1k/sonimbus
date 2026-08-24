@@ -71,6 +71,13 @@ enum PlaybackQueuePolicy {
     }
 }
 
+enum SongUnlockPolicy {
+    static func visibleTracks(_ tracks: [Track], isEnabled: Bool) -> [Track] {
+        guard !isEnabled else { return tracks }
+        return tracks.filter { !$0.isPlaybackUnavailable }
+    }
+}
+
 enum MVQueuePolicy {
     static func deduplicated(_ videos: [MVSummary]) -> [MVSummary] {
         var seen = Set<Int>()
@@ -143,6 +150,22 @@ struct Track: Codable, Hashable, Identifiable {
     }
     var isPlaybackUnavailable: Bool {
         isCopyrightUnavailable || embeddedPrivilege?.pl == 0
+    }
+
+    func applyingPrivilege(_ privilege: TrackPrivilege?) -> Track {
+        guard let privilege else { return self }
+        return Track(
+            id: id,
+            name: name,
+            artists: artists,
+            album: album,
+            durationMS: durationMS,
+            alias: alias,
+            translatedNames: translatedNames,
+            fee: fee,
+            noCopyright: noCopyright,
+            embeddedPrivilege: privilege
+        )
     }
 
     private enum CodingKeys: String, CodingKey {

@@ -23,18 +23,18 @@ struct HomeView: View {
                 header
                 hero
 
-                if !player.recentTracks.isEmpty {
+                if !visibleRecentTracks.isEmpty {
                     HorizontalShelf(title: "最近播放", subtitle: "继续你刚才的音乐") {
-                        ForEach(player.recentTracks.prefix(12)) { track in
-                            TrackCard(track: track, tracks: player.recentTracks, source: .recent)
+                        ForEach(visibleRecentTracks.prefix(12)) { track in
+                            TrackCard(track: track, tracks: visibleRecentTracks, source: .recent)
                         }
                     }
                 }
 
-                if !newSongs.isEmpty {
+                if !visibleNewSongs.isEmpty {
                     HorizontalShelf(title: "为你推荐的新歌", subtitle: "根据你的口味持续更新") {
-                        ForEach(newSongs) { track in
-                            TrackCard(track: track, tracks: newSongs, source: .newSongs)
+                        ForEach(visibleNewSongs) { track in
+                            TrackCard(track: track, tracks: visibleNewSongs, source: .newSongs)
                         }
                     }
                 }
@@ -77,6 +77,14 @@ struct HomeView: View {
         .onChange(of: focusedRoute) { _, route in
             if let route { lastFocusedRoute = route }
         }
+    }
+
+    private var visibleRecentTracks: [Track] {
+        player.visibleTracks(player.recentTracks)
+    }
+
+    private var visibleNewSongs: [Track] {
+        player.visibleTracks(newSongs)
     }
 
     private var header: some View {

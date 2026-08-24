@@ -442,6 +442,11 @@ struct RecentPlaysView: View {
     @State private var errorMessage: String?
     @State private var loadGeneration = 0
 
+    private var visibleRecords: [PlayRecordItem] {
+        let visibleIDs = Set(player.visibleTracks(records.map(\.song)).map(\.id))
+        return records.filter { visibleIDs.contains($0.song.id) }
+    }
+
     var body: some View {
         VStack(spacing: 26) {
             HStack(spacing: 24) {
@@ -460,13 +465,13 @@ struct RecentPlaysView: View {
                 .pickerStyle(.segmented)
                 .frame(width: 420)
                 Button {
-                    player.play(records.map(\.song), source: .recent)
+                    player.play(visibleRecords.map(\.song), source: .recent)
                     openNowPlaying?()
                 } label: {
                     Label("播放全部", systemImage: "play.fill")
                 }
                 .buttonStyle(TVPillButtonStyle(prominent: true))
-                .disabled(records.isEmpty)
+                .disabled(visibleRecords.isEmpty)
 
             }
             .padding(.horizontal, TVTheme.horizontalPadding)
@@ -487,20 +492,22 @@ struct RecentPlaysView: View {
             LoadStateView(title: "无法载入播放记录", message: errorMessage) {
                 Task { await load() }
             }
-        } else if records.isEmpty {
+        } else if visibleRecords.isEmpty {
             EmptyStateView(
-                title: "还没有播放记录",
-                message: "完整播放一段音乐后会出现在这里。",
+                title: records.isEmpty ? "还没有播放记录" : "没有可显示的歌曲",
+                message: records.isEmpty
+                    ? "完整播放一段音乐后会出现在这里。"
+                    : "歌曲解锁已关闭，暂不可用歌曲已隐藏。",
                 symbol: "clock"
             )
         } else {
             ScrollView {
                 LazyVStack(spacing: 9) {
-                    ForEach(Array(records.enumerated()), id: \.element.song.id) { index, record in
+                    ForEach(Array(visibleRecords.enumerated()), id: \.element.song.id) { index, record in
                         TrackRow(
                             track: record.song,
                             index: index,
-                            tracks: records.map(\.song),
+                            tracks: visibleRecords.map(\.song),
                             source: .recent
                         )
                     }
@@ -751,10 +758,13 @@ struct PlaybackSettingsView: View {
 
             HStack(spacing: 28) {
                 VStack(alignment: .leading, spacing: 8) {
-                    Text("不可用歌曲音源补全")
+                    Text("歌曲解锁")
                         .font(.title2.bold())
-                    Text("网易云无完整地址时，按歌曲名、歌手和时长尝试补全。")
+                    Text("开启后显示不可用歌曲，播放时自动尝试补全音源。")
                         .font(.headline)
+                        .foregroundStyle(TVTheme.secondaryText)
+                    Text("顺序：GD 音乐台 → 波点音乐 → 酷狗音乐；关闭后不发起第三方请求。")
+                        .font(.subheadline)
                         .foregroundStyle(TVTheme.secondaryText)
                 }
                 Spacer()
@@ -764,7 +774,7 @@ struct PlaybackSettingsView: View {
                         set: { player.setEnablesAlternativeSources($0) }
                     )
                 )
-                .accessibilityLabel("不可用歌曲音源补全")
+                .accessibilityLabel("歌曲解锁")
             }
             .padding(30)
             .glassPanel(cornerRadius: 28)

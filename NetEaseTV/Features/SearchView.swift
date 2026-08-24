@@ -7,6 +7,7 @@ final class SearchSession {
     var result: NeteaseAPI.SearchResult?
     var songCatalogArtist: ArtistSummary?
     var songCatalogHasMore = false
+    var resultUsesSongUnlock: Bool?
 }
 
 private enum SearchFocus: Hashable {
@@ -86,7 +87,10 @@ struct SearchView: View {
             }
         }
         .background(TVBackground(tint: TVTheme.magenta))
-        .onAppear { loadRecentQueries() }
+        .onAppear {
+            loadRecentQueries()
+            refreshForSongUnlockSettingIfNeeded()
+        }
         .task { await loadSuggestedQuery() }
         .onChange(of: focusedResultID) { _, id in
             if let id { lastFocusedResultID = id }
@@ -100,6 +104,12 @@ struct SearchView: View {
             result = nil
             session.songCatalogArtist = nil
             session.songCatalogHasMore = false
+            session.resultUsesSongUnlock = nil
+        }
+        .onChange(of: player.enablesAlternativeSources) { _, _ in
+            guard scope == .songs,
+                  !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+            Task { await search() }
         }
         .task(id: focusRestorationGeneration) { await restoreNavigationFocus() }
     }
@@ -108,14 +118,15 @@ struct SearchView: View {
     private func results(_ result: NeteaseAPI.SearchResult) -> some View {
         switch scope {
         case .songs:
-            let tracks = result.songs ?? []
+            let tracks = player.visibleTracks(result.songs ?? [])
             if tracks.isEmpty {
                 noResults
             } else {
                 ScrollViewReader { proxy in
                     ScrollView {
                         LazyVStack(spacing: 9) {
-                            if let artist = session.songCatalogArtist {
+                            if player.enablesAlternativeSources,
+                               let artist = session.songCatalogArtist {
                                 catalogHeader(artist)
                             }
                             ForEach(Array(tracks.enumerated()), id: \.element.id) { index, track in
@@ -327,6 +338,7 @@ struct SearchView: View {
         searchGeneration += 1
         let generation = searchGeneration
         let requestedScope = scope
+        let requestedSongUnlockState = player.enablesAlternativeSources
         isSearching = true
         isLoadingMore = false
         focusedResultID = nil
@@ -338,7 +350,7 @@ struct SearchView: View {
             var response: NeteaseAPI.SearchResult
             var matchedCatalogArtist: ArtistSummary?
             var matchedCatalogHasMore = false
-            if requestedScope == .songs {
+            if requestedScope == .songs, requestedSongUnlockState {
                 async let regularSearch = NeteaseAPI.search(keyword, type: .songs)
                 async let artistSearch = NeteaseAPI.search(keyword, type: .artists, limit: 10)
                 response = try await regularSearch
@@ -359,12 +371,16 @@ struct SearchView: View {
             }
             guard generation == searchGeneration else { return }
             guard requestedScope == scope,
+                  requestedSongUnlockState == player.enablesAlternativeSources,
                   keyword == query.trimmingCharacters(in: .whitespacesAndNewlines) else {
                 isSearching = false
                 return
             }
             session.songCatalogArtist = matchedCatalogArtist
             session.songCatalogHasMore = matchedCatalogHasMore
+            session.resultUsesSongUnlock = requestedScope == .songs
+                ? requestedSongUnlockState
+                : nil
             result = response
             recordRecentQuery(keyword)
         } catch {
@@ -377,6 +393,15 @@ struct SearchView: View {
             errorMessage = error.localizedDescription
         }
         if generation == searchGeneration { isSearching = false }
+    }
+
+    private func refreshForSongUnlockSettingIfNeeded() {
+        guard scope == .songs,
+              !isSearching,
+              result != nil,
+              session.resultUsesSongUnlock != player.enablesAlternativeSources,
+              !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        Task { await search() }
     }
 
     @MainActor
@@ -393,7 +418,9 @@ struct SearchView: View {
         do {
             let next: NeteaseAPI.SearchResult
             var catalogHasMore: Bool?
-            if requestedScope == .songs, let artist = session.songCatalogArtist {
+            if requestedScope == .songs,
+               player.enablesAlternativeSources,
+               let artist = session.songCatalogArtist {
                 let page = try await NeteaseAPI.artistSongs(
                     id: artist.id,
                     offset: current.songs?.count ?? 0

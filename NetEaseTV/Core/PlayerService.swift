@@ -95,7 +95,7 @@ final class PlayerService {
     private var wasPlayingBeforeInterruption = false
     private var isResolvingURL = false
     private var didReachEnd = false
-    private var didAttemptAlternativeSource = false
+    private var attemptedAlternativeSources = Set<String>()
 
     private var activeQueue: [Track] { shuffleEnabled ? shuffledQueue : queue }
 
@@ -152,7 +152,7 @@ final class PlayerService {
     }
 
     func play(_ tracks: [Track], source: PlaySource, startingAt track: Track? = nil) {
-        let uniqueTracks = PlaybackQueuePolicy.deduplicated(tracks)
+        let uniqueTracks = PlaybackQueuePolicy.deduplicated(visibleTracks(tracks))
         guard !uniqueTracks.isEmpty else { return }
         consecutiveFailures = 0
         queue = uniqueTracks
@@ -170,7 +170,7 @@ final class PlayerService {
     }
 
     func playShuffled(_ tracks: [Track], source: PlaySource) {
-        let uniqueTracks = PlaybackQueuePolicy.deduplicated(tracks)
+        let uniqueTracks = PlaybackQueuePolicy.deduplicated(visibleTracks(tracks))
         guard let startingTrack = uniqueTracks.randomElement() else { return }
         if !shuffleEnabled {
             shuffleEnabled = true
@@ -180,6 +180,10 @@ final class PlayerService {
     }
 
     func playTrack(_ track: Track, source: PlaySource = .none) {
+        guard isTrackVisible(track) else {
+            ToastCenter.shared.show("请先在设置中开启歌曲解锁")
+            return
+        }
         consecutiveFailures = 0
         if let index = activeQueue.firstIndex(where: { $0.id == track.id }) {
             currentIndex = index
@@ -190,6 +194,10 @@ final class PlayerService {
     }
 
     func playNext(_ track: Track) {
+        guard isTrackVisible(track) else {
+            ToastCenter.shared.show("请先在设置中开启歌曲解锁")
+            return
+        }
         guard let currentTrack else {
             play([track], source: .none)
             return
@@ -216,6 +224,10 @@ final class PlayerService {
     }
 
     func addToQueue(_ track: Track) {
+        guard isTrackVisible(track) else {
+            ToastCenter.shared.show("请先在设置中开启歌曲解锁")
+            return
+        }
         guard currentTrack != nil else {
             play([track], source: .none)
             return
@@ -281,7 +293,7 @@ final class PlayerService {
         servedQuality = nil
         alternativeSource = nil
         isTrial = false
-        didAttemptAlternativeSource = false
+        attemptedAlternativeSources.removeAll()
         isResolvingURL = false
         didReachEnd = false
         scrobbled = false
@@ -318,7 +330,7 @@ final class PlayerService {
         servedQuality = nil
         alternativeSource = nil
         isTrial = false
-        didAttemptAlternativeSource = false
+        attemptedAlternativeSources.removeAll()
         isPlaying = false
         isResolvingURL = false
         isBuffering = true
@@ -509,7 +521,40 @@ final class PlayerService {
     func setEnablesAlternativeSources(_ enabled: Bool) {
         enablesAlternativeSources = enabled
         UserDefaults.standard.set(enabled, forKey: "player.alternativeSources")
-        ToastCenter.shared.show(enabled ? "已开启不可用歌曲音源补全" : "已关闭不可用歌曲音源补全")
+        if !enabled {
+            pruneUnavailableTracksFromQueue()
+        }
+        ToastCenter.shared.show(
+            enabled ? "已开启歌曲解锁" : "已关闭歌曲解锁，后续不再尝试第三方音源"
+        )
+    }
+
+    func visibleTracks(_ tracks: [Track]) -> [Track] {
+        SongUnlockPolicy.visibleTracks(tracks, isEnabled: enablesAlternativeSources)
+    }
+
+    private func isTrackVisible(_ track: Track) -> Bool {
+        enablesAlternativeSources || !track.isPlaybackUnavailable
+    }
+
+    private func pruneUnavailableTracksFromQueue() {
+        let currentID = currentTrack?.id
+        let shouldKeep: (Track) -> Bool = { track in
+            track.id == currentID || !track.isPlaybackUnavailable
+        }
+        queue = queue.filter(shouldKeep)
+        shuffledQueue = shuffledQueue.filter(shouldKeep)
+        fmUpcoming = fmUpcoming.filter { !$0.isPlaybackUnavailable }
+        guard source != .personalFM else {
+            persistState()
+            return
+        }
+        if let currentID {
+            currentIndex = activeQueue.firstIndex(where: { $0.id == currentID }) ?? 0
+        } else {
+            currentIndex = -1
+        }
+        persistState()
     }
 
     func retryLyrics() {
@@ -549,7 +594,7 @@ final class PlayerService {
         servedQuality = nil
         alternativeSource = nil
         isTrial = false
-        didAttemptAlternativeSource = false
+        attemptedAlternativeSources.removeAll()
         didReachEnd = false
         scrobbled = false
         isPlaying = false
@@ -590,9 +635,16 @@ final class PlayerService {
         guard generation == resolveGeneration else { return }
         var resolvedAlternative: UnblockService.Resolved?
         if enablesAlternativeSources, url == nil || result?.freeTrialInfo != nil {
-            didAttemptAlternativeSource = true
-            resolvedAlternative = await UnblockService.resolve(track)
-            if let resolvedAlternative { url = resolvedAlternative.url }
+            resolvedAlternative = await UnblockService.resolve(
+                track,
+                excludingSources: attemptedAlternativeSources
+            )
+            if enablesAlternativeSources, let resolvedAlternative {
+                attemptedAlternativeSources.insert(resolvedAlternative.source)
+                url = resolvedAlternative.url
+            } else {
+                resolvedAlternative = nil
+            }
         }
         guard generation == resolveGeneration else { return }
         guard let url else {
@@ -674,17 +726,18 @@ final class PlayerService {
         engine.replaceCurrentItem(with: nil)
         resolveGeneration += 1
         let retryGeneration = resolveGeneration
-        guard enablesAlternativeSources,
-              !didAttemptAlternativeSource,
-              alternativeSource == nil else {
+        guard enablesAlternativeSources else {
             handleUnavailableTrack(track)
             return
         }
-        didAttemptAlternativeSource = true
         isPlaying = false
         isResolvingURL = true
         isBuffering = true
-        ToastCenter.shared.show("原播放地址不可用，正在尝试补全音源…")
+        ToastCenter.shared.show(
+            alternativeSource == nil
+                ? "原播放地址不可用，正在尝试补全音源…"
+                : "当前补全音源不可用，正在尝试其他来源…"
+        )
         Task {
             await retryWithAlternativeSource(
                 track,
@@ -699,14 +752,22 @@ final class PlayerService {
         generation: Int,
         startingAt position: TimeInterval
     ) async {
-        let resolved = await UnblockService.resolve(track)
+        let resolved = await UnblockService.resolve(
+            track,
+            excludingSources: attemptedAlternativeSources
+        )
         guard generation == resolveGeneration,
               currentTrack?.id == track.id else { return }
+        guard enablesAlternativeSources else {
+            handleUnavailableTrack(track)
+            return
+        }
         guard let resolved else {
             handleUnavailableTrack(track)
             return
         }
         consecutiveFailures = 0
+        attemptedAlternativeSources.insert(resolved.source)
         alternativeSource = resolved.source
         servedQuality = nil
         isTrial = false
@@ -951,7 +1012,8 @@ final class PlayerService {
               let state = try? JSONDecoder().decode(PersistedState.self, from: data) else { return }
         recentTracks = Array(PlaybackQueuePolicy.deduplicated(state.recentTracks ?? []).prefix(40))
         guard !state.queue.isEmpty else { return }
-        queue = PlaybackQueuePolicy.deduplicated(state.queue)
+        queue = PlaybackQueuePolicy.deduplicated(visibleTracks(state.queue))
+        guard !queue.isEmpty else { return }
         source = state.source
         repeatMode = state.repeatMode
         shuffleEnabled = state.shuffle

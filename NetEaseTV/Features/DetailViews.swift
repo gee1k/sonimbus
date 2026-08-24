@@ -1112,6 +1112,10 @@ private struct TrackCollectionView: View {
     @State private var lastFocusedRoute: AppRoute?
     @FocusState private var focusedRoute: AppRoute?
 
+    private var visibleTracks: [Track] {
+        player.visibleTracks(tracks)
+    }
+
     var body: some View {
         ScrollView {
             LazyVStack(spacing: 32) {
@@ -1149,26 +1153,26 @@ private struct TrackCollectionView: View {
                         }
                         HStack(spacing: 18) {
                             Button {
-                                player.play(tracks, source: source)
+                                player.play(visibleTracks, source: source)
                                 openNowPlaying?()
                             } label: {
                                 Label("播放", systemImage: "play.fill")
                             }
                             .buttonStyle(TVPillButtonStyle(prominent: true))
-                            .disabled(tracks.isEmpty)
+                            .disabled(visibleTracks.isEmpty)
 
                             Button {
-                                player.playShuffled(tracks, source: source)
+                                player.playShuffled(visibleTracks, source: source)
                                 openNowPlaying?()
                             } label: {
                                 Label("随机播放", systemImage: "shuffle")
                             }
                             .buttonStyle(TVPillButtonStyle())
-                            .disabled(tracks.isEmpty)
+                            .disabled(visibleTracks.isEmpty)
 
                             if let playlistID = source.playlistID,
                                playlistID == account.likedSongsPlaylist?.id,
-                               let first = tracks.first(where: { !$0.noCopyright }) {
+                               let first = visibleTracks.first(where: { !$0.noCopyright }) {
                                 Button {
                                     player.startIntelligence(from: first, playlistID: playlistID) {
                                         openNowPlaying?()
@@ -1203,7 +1207,7 @@ private struct TrackCollectionView: View {
                 .padding(.horizontal, TVTheme.horizontalPadding)
                 .padding(.top, 34)
 
-                if tracks.isEmpty {
+                if visibleTracks.isEmpty {
                     EmptyStateView(
                         title: "暂无可播放歌曲",
                         message: "内容可能受版权或地区限制。",
@@ -1213,11 +1217,11 @@ private struct TrackCollectionView: View {
                     .padding(.horizontal, TVTheme.horizontalPadding)
                 } else {
                     LazyVStack(spacing: 9) {
-                        ForEach(Array(tracks.enumerated()), id: \.element.id) { index, track in
+                        ForEach(Array(visibleTracks.enumerated()), id: \.element.id) { index, track in
                             TrackRow(
                                 track: track,
                                 index: index,
-                                tracks: tracks,
+                                tracks: visibleTracks,
                                 source: source
                             )
                         }

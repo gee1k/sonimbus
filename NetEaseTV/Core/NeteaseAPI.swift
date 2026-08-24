@@ -276,20 +276,23 @@ enum NeteaseAPI {
             "/v6/playlist/detail",
             ["id": id, "n": 100_000, "s": 8]
         )
-        guard response.playlist.tracks.count < response.playlist.trackIds.count else {
-            return response
-        }
+        var tracks = response.playlist.tracks
+        var privileges = response.privileges ?? []
         let known = Set(response.playlist.tracks.map(\.id))
         var missingIDs = Set<Int>()
         let missing = response.playlist.trackIds
             .map(\.id)
             .filter { !known.contains($0) && missingIDs.insert($0).inserted }
-        guard !missing.isEmpty else { return response }
-        guard let fetched = try? await songDetails(ids: missing) else { return response }
+        if !missing.isEmpty, let fetched = try? await songDetails(ids: missing) {
+            tracks.append(contentsOf: fetched.songs)
+            privileges.append(contentsOf: fetched.privileges ?? [])
+        }
         let order = response.playlist.trackIds.enumerated().reduce(into: [Int: Int]()) { result, item in
             if result[item.element.id] == nil { result[item.element.id] = item.offset }
         }
-        let combined = (response.playlist.tracks + fetched.songs)
+        let privilegeByID = Dictionary(privileges.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        let combined = tracks
+            .map { $0.applyingPrivilege(privilegeByID[$0.id]) }
             .sorted { (order[$0.id] ?? .max) < (order[$1.id] ?? .max) }
         let detail = PlaylistDetail(
             id: response.playlist.id,
@@ -303,7 +306,7 @@ enum NeteaseAPI {
             tracks: combined,
             trackIds: response.playlist.trackIds
         )
-        return PlaylistDetailResponse(playlist: detail, privileges: response.privileges)
+        return PlaylistDetailResponse(playlist: detail, privileges: privileges)
     }
 
     struct SongDetailResponse: Decodable {

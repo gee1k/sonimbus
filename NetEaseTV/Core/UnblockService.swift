@@ -7,26 +7,39 @@ import Foundation
 /// matching order are independently implemented from the references listed in
 /// THIRD_PARTY_NOTICES.md.
 enum UnblockService {
+    private enum Source {
+        static let gdMusic = "GD 音乐台"
+        static let bodian = "波点音乐"
+        static let kugou = "酷狗音乐"
+    }
+
     struct Resolved: Sendable {
         let url: URL
         let source: String
     }
 
-    static func resolve(_ track: Track) async -> Resolved? {
-        if let url = await pyncmd(track), await validatesStream(url, for: track) {
-            return Resolved(url: url, source: "GD 音乐台")
+    static let automaticRetrySources = [Source.gdMusic, Source.bodian, Source.kugou]
+
+    static func resolve(
+        _ track: Track,
+        excludingSources: Set<String> = []
+    ) async -> Resolved? {
+        if !excludingSources.contains(Source.gdMusic),
+           let url = await pyncmd(track),
+           await validatesStream(url, for: track) {
+            return Resolved(url: url, source: Source.gdMusic)
         }
         guard !Task.isCancelled else { return nil }
-        if let url = await bodian(track), await validatesStream(url, for: track) {
-            return Resolved(url: url, source: "波点音乐")
+        if !excludingSources.contains(Source.bodian),
+           let url = await bodian(track),
+           await validatesStream(url, for: track) {
+            return Resolved(url: url, source: Source.bodian)
         }
         guard !Task.isCancelled else { return nil }
-        if let url = await kugou(track), await validatesStream(url, for: track) {
-            return Resolved(url: url, source: "酷狗音乐")
-        }
-        guard !Task.isCancelled else { return nil }
-        if let url = await kuwo(track), await validatesStream(url, for: track) {
-            return Resolved(url: url, source: "酷我音乐")
+        if !excludingSources.contains(Source.kugou),
+           let url = await kugou(track),
+           await validatesStream(url, for: track) {
+            return Resolved(url: url, source: Source.kugou)
         }
         return nil
     }
@@ -192,39 +205,6 @@ enum UnblockService {
         .map { String(format: "%02x", $0) }
         .joined()
         return timestamped + "&sign=\(digest)"
-    }
-
-    // MARK: Kuwo
-
-    private static func kuwo(_ track: Track) async -> URL? {
-        let query = encoded(keyword(for: track))
-        let endpoint = "https://search.kuwo.cn/r.s?correct=1&vipver=1&stype=comprehensive&encoding=utf8"
-            + "&rformat=json&mobi=1&show_copyright_off=1&searchapi=6&all=\(query)"
-        guard let data = await get(endpoint),
-              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let content = object["content"] as? [[String: Any]], content.count > 1,
-              let page = content[1]["musicpage"] as? [String: Any],
-              let rawSongs = page["abslist"] as? [[String: Any]], !rawSongs.isEmpty else { return nil }
-
-        let songs: [(id: String, durationMS: Int)] = rawSongs.compactMap { item in
-            guard let musicID = item["MUSICRID"] as? String,
-                  let id = musicID.components(separatedBy: "_").last,
-                  !id.isEmpty else { return nil }
-            let seconds = (item["DURATION"] as? NSNumber)?.intValue
-                ?? (item["DURATION"] as? String).flatMap(Int.init)
-                ?? 0
-            return (id, seconds * 1_000)
-        }
-        guard let index = preferredMatchIndex(
-            durationsMS: songs.map(\.durationMS),
-            targetDurationMS: track.durationMS
-        ) else { return nil }
-        let convert = "https://antiserver.kuwo.cn/anti.s?type=convert_url&format=mp3&response=url"
-            + "&rid=MUSIC_\(songs[index].id)"
-        guard let data = await get(convert, userAgent: "okhttp/3.10.0"),
-              let body = String(data: data, encoding: .utf8),
-              let range = body.range(of: #"https?[^\s$\"]+"#, options: .regularExpression) else { return nil }
-        return secureURL(String(body[range]))
     }
 
     // MARK: Kugou
