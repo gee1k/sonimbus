@@ -301,7 +301,6 @@ struct NowPlayingView: View {
                         lyricsPanel
                             .frame(maxWidth: .infinity, maxHeight: .infinity)
                             .focusSection()
-                            .clipped()
                             .transition(.move(edge: .trailing).combined(with: .opacity))
                     }
                 }
@@ -439,7 +438,9 @@ struct NowPlayingView: View {
     }
 
     private var lyricsPanel: some View {
-        Group {
+        let viewportHeight: CGFloat = interaction.showsControls ? 430 : 760
+
+        return Group {
             if player.lyrics?.isInstrumental == true, player.lyrics?.lines.isEmpty == true {
                 VStack(alignment: .leading, spacing: 20) {
                     Image(systemName: "waveform.path")
@@ -453,11 +454,12 @@ struct NowPlayingView: View {
                 NowPlayingSyncedLyrics(
                     lines: lines,
                     showsTranslatedLyrics: player.showsTranslatedLyrics,
-                    selectedIndex: interaction.selectedLyricIndex
+                    selectedIndex: interaction.selectedLyricIndex,
+                    viewportHeight: viewportHeight
                 )
-                .frame(height: 430)
-                .offset(y: 100)
-                .frame(height: 560)
+                .frame(height: viewportHeight)
+                .offset(y: 200)
+                .frame(height: 650, alignment: .top)
             } else if player.isLoadingLyrics {
                 VStack(alignment: .leading, spacing: 20) {
                     ProgressView().controlSize(.large)
@@ -1196,81 +1198,90 @@ private struct NowPlayingSyncedLyrics: View {
     let lines: [LyricLine]
     let showsTranslatedLyrics: Bool
     let selectedIndex: Int?
+    let viewportHeight: CGFloat
 
     var body: some View {
+        GeometryReader { proxy in
+            lyricTrack(availableWidth: proxy.size.width)
+        }
+        .frame(
+            maxWidth: .infinity,
+            minHeight: viewportHeight,
+            maxHeight: viewportHeight,
+            alignment: .topLeading
+        )
+    }
+
+    private func lyricTrack(availableWidth: CGFloat) -> some View {
         let activeLyricIndex = player.activeLyricIndex
         let anchorIndex = validIndex(selectedIndex) ?? validIndex(activeLyricIndex) ?? 0
-        let presentation = presentation(anchorIndex: anchorIndex)
-        let visibleIndices = Array(anchorIndex..<min(anchorIndex + presentation.visibleCount, lines.count))
         let emphasizedIndex = validIndex(selectedIndex) ?? validIndex(activeLyricIndex) ?? anchorIndex
+        let layouts = rowLayouts(availableWidth: availableWidth)
+        let anchorOrigin = layouts[anchorIndex].originY
+        let visibleIndices = viewportIndices(around: anchorIndex)
 
-        VStack(alignment: .leading, spacing: 8) {
+        return ZStack(alignment: .topLeading) {
             ForEach(visibleIndices, id: \.self) { index in
                 let line = lines[index]
+                let layout = layouts[index]
                 let emphasized = index == emphasizedIndex
+                let opacity = primaryOpacity(for: index - emphasizedIndex)
 
                 lyricRow(
                     line,
-                    emphasized: emphasized,
                     selected: index == selectedIndex,
-                    presentation: presentation
+                    primaryOpacity: opacity
                 )
                     .frame(
                         maxWidth: .infinity,
-                        minHeight: presentation.rowHeight,
-                        maxHeight: presentation.rowHeight,
-                        alignment: .leading
+                        minHeight: layout.metrics.height,
+                        maxHeight: layout.metrics.height,
+                        alignment: .topLeading
                     )
-                    .transition(
-                        .asymmetric(
-                            insertion: .move(edge: .bottom).combined(with: .opacity),
-                            removal: .move(edge: .top).combined(with: .opacity)
-                        )
-                    )
+                    .offset(y: lyricAnchorY + layout.originY - anchorOrigin)
+                    .zIndex(emphasized ? 1 : 0)
             }
         }
-        .frame(maxWidth: .infinity, maxHeight: 430, alignment: .topLeading)
+        .frame(maxWidth: .infinity, minHeight: viewportHeight, maxHeight: viewportHeight, alignment: .topLeading)
         .clipped()
+        .mask(lyricViewportMask)
         .allowsHitTesting(false)
-        .animation(reduceMotion ? nil : .easeInOut(duration: 0.42), value: anchorIndex)
+        .animation(reduceMotion ? nil : .smooth(duration: 0.56), value: anchorIndex)
+        .animation(reduceMotion ? nil : .smooth(duration: 0.42), value: showsTranslatedLyrics)
     }
 
     private func lyricRow(
         _ line: LyricLine,
-        emphasized: Bool,
         selected: Bool,
-        presentation: Presentation
+        primaryOpacity: Double
     ) -> some View {
         VStack(alignment: .leading, spacing: 7) {
             Text(line.text.isEmpty ? "♪" : line.text)
                 .font(.system(
-                    size: emphasized ? presentation.emphasizedFontSize : presentation.secondaryFontSize,
-                    weight: emphasized ? .bold : .semibold,
+                    size: lyricFontSize,
+                    weight: .bold,
                     design: .rounded
                 ))
-                .lineLimit(presentation.primaryLineLimit)
-                .minimumScaleFactor(presentation.minimumScaleFactor)
-                .padding(.trailing, selected ? 92 : 0)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.trailing, selected ? lyricSelectionBadgeClearance : 0)
 
             if showsTranslatedLyrics,
                let translation = line.translation, !translation.isEmpty {
                 Text(translation)
-                    .font(.system(size: emphasized ? 25 : 22, weight: .semibold, design: .rounded))
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.76)
-                    .foregroundStyle(secondaryColor(emphasized: emphasized, emphasis: 0.78))
+                    .font(.system(size: 26, weight: .semibold, design: .rounded))
+                    .fixedSize(horizontal: false, vertical: true)
+                    .foregroundStyle(secondaryColor(primaryOpacity: primaryOpacity, emphasis: 0.78))
             } else if showsTranslatedLyrics,
                       let romaji = line.romaji, !romaji.isEmpty {
                 Text(romaji)
-                    .font(.system(size: 20, weight: .semibold, design: .rounded))
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.76)
-                    .foregroundStyle(secondaryColor(emphasized: emphasized, emphasis: 0.54))
+                    .font(.system(size: 24, weight: .semibold, design: .rounded))
+                    .fixedSize(horizontal: false, vertical: true)
+                    .foregroundStyle(secondaryColor(primaryOpacity: primaryOpacity, emphasis: 0.54))
             }
         }
-        .padding(.horizontal, 14)
+        .padding(.horizontal, lyricHorizontalPadding)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .foregroundStyle(emphasized ? Color.white : Color.white.opacity(0.30))
+        .foregroundStyle(Color.white.opacity(primaryOpacity))
         .overlay(alignment: .topTrailing) {
             if selected {
                 Text(DisplayFormatter.duration(line.time))
@@ -1283,44 +1294,104 @@ private struct NowPlayingSyncedLyrics: View {
                     .padding(.trailing, 8)
             }
         }
-        .animation(reduceMotion ? nil : .easeOut(duration: 0.24), value: emphasized)
+        .animation(reduceMotion ? nil : .smooth(duration: 0.46), value: primaryOpacity)
         .accessibilityLabel(line.text.isEmpty ? "音乐间奏" : line.text)
         .accessibilityValue(DisplayFormatter.duration(line.time))
     }
 
-    private func presentation(anchorIndex: Int) -> Presentation {
-        let sample = lines[anchorIndex..<min(anchorIndex + 3, lines.count)]
-        let hasSupplementalText = showsTranslatedLyrics && sample.contains { line in
-            line.translation?.isEmpty == false || line.romaji?.isEmpty == false
-        }
-        let hasLongPrimaryText = sample.contains { estimatedWidthUnits($0.text) > 19 }
-
-        if hasSupplementalText || hasLongPrimaryText {
-            return Presentation(
-                visibleCount: 2,
-                rowHeight: 211,
-                emphasizedFontSize: hasLongPrimaryText ? 68 : 72,
-                secondaryFontSize: hasLongPrimaryText ? 56 : 58,
-                primaryLineLimit: hasLongPrimaryText ? 2 : 1,
-                minimumScaleFactor: hasLongPrimaryText ? 0.78 : 0.68
-            )
-        }
-
-        return Presentation(
-            visibleCount: 3,
-            rowHeight: 138,
-            emphasizedFontSize: 74,
-            secondaryFontSize: 62,
-            primaryLineLimit: 1,
-            minimumScaleFactor: 0.66
+    private var lyricViewportMask: some View {
+        LinearGradient(
+            stops: [
+                .init(color: .clear, location: 0),
+                .init(color: .black, location: 0.025),
+                .init(color: .black, location: 0.76),
+                .init(color: .clear, location: 1),
+            ],
+            startPoint: .top,
+            endPoint: .bottom
         )
     }
 
-    private func estimatedWidthUnits(_ text: String) -> Double {
-        text.reduce(into: 0.0) { result, character in
-            let isASCII = character.unicodeScalars.allSatisfy { $0.isASCII }
-            result += isASCII ? 0.58 : 1
+    private func viewportIndices(around anchorIndex: Int) -> [Int] {
+        let lowerBound = max(anchorIndex - 2, lines.startIndex)
+        let upperBound = min(anchorIndex + 5, lines.index(before: lines.endIndex))
+        return Array(lowerBound...upperBound)
+    }
+
+    private func rowLayouts(availableWidth: CGFloat) -> [RowLayout] {
+        var nextOrigin: CGFloat = 0
+        return lines.indices.map { index in
+            let metrics = rowMetrics(
+                for: lines[index],
+                availableWidth: availableWidth,
+                selected: index == selectedIndex
+            )
+            defer { nextOrigin += metrics.height + lyricRowSpacing }
+            return RowLayout(originY: nextOrigin, metrics: metrics)
         }
+    }
+
+    private func rowMetrics(
+        for line: LyricLine,
+        availableWidth: CGFloat,
+        selected: Bool
+    ) -> RowMetrics {
+        let lyricText = line.text.isEmpty ? "♪" : line.text
+        let contentWidth = max(
+            1,
+            availableWidth
+                - lyricHorizontalPadding * 2
+                - (selected ? lyricSelectionBadgeClearance : 0)
+        )
+        let primaryHeight = measuredTextHeight(
+            lyricText,
+            font: roundedFont(size: lyricFontSize, weight: .bold),
+            width: contentWidth
+        )
+
+        let supplemental: (text: String, font: UIFont)? = if showsTranslatedLyrics {
+            if let translation = line.translation, !translation.isEmpty {
+                (translation, roundedFont(size: 26, weight: .semibold))
+            } else if let romaji = line.romaji, !romaji.isEmpty {
+                (romaji, roundedFont(size: 24, weight: .semibold))
+            } else {
+                nil
+            }
+        } else {
+            nil
+        }
+        let supplementalHeight = supplemental.map {
+            lyricSupplementalSpacing
+                + measuredTextHeight($0.text, font: $0.font, width: contentWidth)
+        } ?? 0
+
+        return RowMetrics(
+            height: primaryHeight + supplementalHeight + lyricRowBottomBreathingRoom
+        )
+    }
+
+    private var lyricAnchorY: CGFloat { 24 }
+    private var lyricRowSpacing: CGFloat { 16 }
+    private var lyricFontSize: CGFloat { 80 }
+    private var lyricHorizontalPadding: CGFloat { 14 }
+    private var lyricSelectionBadgeClearance: CGFloat { 92 }
+    private var lyricSupplementalSpacing: CGFloat { 7 }
+    private var lyricRowBottomBreathingRoom: CGFloat { 68 }
+
+    private func roundedFont(size: CGFloat, weight: UIFont.Weight) -> UIFont {
+        let font = UIFont.systemFont(ofSize: size, weight: weight)
+        guard let descriptor = font.fontDescriptor.withDesign(.rounded) else { return font }
+        return UIFont(descriptor: descriptor, size: size)
+    }
+
+    private func measuredTextHeight(_ text: String, font: UIFont, width: CGFloat) -> CGFloat {
+        let bounds = (text as NSString).boundingRect(
+            with: CGSize(width: width, height: .greatestFiniteMagnitude),
+            options: [.usesLineFragmentOrigin, .usesFontLeading],
+            attributes: [.font: font],
+            context: nil
+        )
+        return ceil(max(font.lineHeight, bounds.height))
     }
 
     private func validIndex(_ index: Int?) -> Int? {
@@ -1328,17 +1399,30 @@ private struct NowPlayingSyncedLyrics: View {
         return index
     }
 
-    private func secondaryColor(emphasized: Bool, emphasis: Double) -> Color {
-        .white.opacity(emphasized ? emphasis : max(0.24, emphasis * 0.42))
+    private func primaryOpacity(for distance: Int) -> Double {
+        switch abs(distance) {
+        case 0: 1
+        case 1: 0.38
+        case 2: 0.27
+        case 3: 0.19
+        default: 0.13
+        }
     }
 
-    private struct Presentation {
-        let visibleCount: Int
-        let rowHeight: CGFloat
-        let emphasizedFontSize: CGFloat
-        let secondaryFontSize: CGFloat
-        let primaryLineLimit: Int
-        let minimumScaleFactor: CGFloat
+    private func secondaryColor(primaryOpacity: Double, emphasis: Double) -> Color {
+        let opacity = primaryOpacity == 1
+            ? emphasis
+            : min(primaryOpacity, max(0.12, primaryOpacity * 0.82))
+        return .white.opacity(opacity)
+    }
+
+    private struct RowLayout {
+        let originY: CGFloat
+        let metrics: RowMetrics
+    }
+
+    private struct RowMetrics {
+        let height: CGFloat
     }
 }
 
