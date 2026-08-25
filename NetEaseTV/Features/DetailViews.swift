@@ -1111,6 +1111,7 @@ private struct TrackCollectionView: View {
     @Environment(AccountStore.self) private var account
     @State private var lastFocusedRoute: AppRoute?
     @FocusState private var focusedRoute: AppRoute?
+    @FocusState private var focusedTrackID: AnyHashable?
 
     private var visibleTracks: [Track] {
         player.visibleTracks(tracks)
@@ -1154,7 +1155,7 @@ private struct TrackCollectionView: View {
                         HStack(spacing: 18) {
                             Button {
                                 player.play(visibleTracks, source: source)
-                                openNowPlaying?()
+                                openNowPlaying?(nil)
                             } label: {
                                 Label("播放", systemImage: "play.fill")
                             }
@@ -1163,7 +1164,7 @@ private struct TrackCollectionView: View {
 
                             Button {
                                 player.playShuffled(visibleTracks, source: source)
-                                openNowPlaying?()
+                                openNowPlaying?(nil)
                             } label: {
                                 Label("随机播放", systemImage: "shuffle")
                             }
@@ -1175,7 +1176,7 @@ private struct TrackCollectionView: View {
                                let first = visibleTracks.first(where: { !$0.noCopyright }) {
                                 Button {
                                     player.startIntelligence(from: first, playlistID: playlistID) {
-                                        openNowPlaying?()
+                                        openNowPlaying?(nil)
                                     }
                                 } label: {
                                     Label("心动模式", systemImage: "heart.fill")
@@ -1222,7 +1223,8 @@ private struct TrackCollectionView: View {
                                 track: track,
                                 index: index,
                                 tracks: visibleTracks,
-                                source: source
+                                source: source,
+                                focusBinding: $focusedTrackID
                             )
                         }
                     }

@@ -33,7 +33,7 @@ struct SearchView: View {
     @State private var pendingResultFocusID: Int?
     @State private var lastFocusedResultID: Int?
     @FocusState private var focusedSearchControl: SearchFocus?
-    @FocusState private var focusedResultID: Int?
+    @FocusState private var focusedResultID: AnyHashable?
 
     private var query: String {
         get { session.query }
@@ -95,7 +95,9 @@ struct SearchView: View {
         }
         .task { await loadSuggestedQuery() }
         .onChange(of: focusedResultID) { _, id in
-            if let id { lastFocusedResultID = id }
+            if let id = id?.base as? Int {
+                lastFocusedResultID = id
+            }
         }
         .onChange(of: rootTabActivationGeneration) { _, _ in
             focusedSearchControl = nil
@@ -138,9 +140,14 @@ struct SearchView: View {
                                 catalogHeader(artist)
                             }
                             ForEach(Array(tracks.enumerated()), id: \.element.id) { index, track in
-                                TrackRow(track: track, index: index, tracks: tracks, source: .search)
+                                TrackRow(
+                                    track: track,
+                                    index: index,
+                                    tracks: tracks,
+                                    source: .search,
+                                    focusBinding: $focusedResultID
+                                )
                                     .id(track.id)
-                                    .focused($focusedResultID, equals: track.id)
                             }
                             if hasMore(result) { loadMoreButton }
                         }
@@ -207,7 +214,7 @@ struct SearchView: View {
                                 ForEach(items) { item in
                                     card(item)
                                         .id(item.id)
-                                        .focused($focusedResultID, equals: item.id)
+                                        .focused($focusedResultID, equals: AnyHashable(item.id))
                                         .simultaneousGesture(TapGesture().onEnded {
                                             lastFocusedResultID = item.id
                                         })
@@ -580,7 +587,7 @@ struct SearchView: View {
         proxy.scrollTo(id, anchor: .center)
         try? await Task.sleep(for: .milliseconds(160))
         guard pendingResultFocusID == id else { return }
-        focusedResultID = id
+        focusedResultID = AnyHashable(id)
         pendingResultFocusID = nil
     }
 

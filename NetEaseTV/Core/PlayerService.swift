@@ -4,7 +4,7 @@ import Observation
 import os.log
 import UIKit
 
-enum PlaySource: Codable, Equatable {
+enum PlaySource: Codable, Hashable {
     case playlist(Int)
     case intelligence(Int)
     case album(Int)

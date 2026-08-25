@@ -1,7 +1,7 @@
 import SwiftUI
 
 private struct OpenNowPlayingKey: EnvironmentKey {
-    static let defaultValue: (() -> Void)? = nil
+    static let defaultValue: ((AnyHashable?) -> Void)? = nil
 }
 
 private struct HandlesNavigationExitKey: EnvironmentKey {
@@ -20,8 +20,16 @@ private struct RootTabActivationKey: EnvironmentKey {
     static let defaultValue = 0
 }
 
+private struct NowPlayingFocusRestorationGenerationKey: EnvironmentKey {
+    static let defaultValue = 0
+}
+
+private struct NowPlayingFocusRestorationIDKey: EnvironmentKey {
+    static let defaultValue: AnyHashable? = nil
+}
+
 extension EnvironmentValues {
-    var openNowPlaying: (() -> Void)? {
+    var openNowPlaying: ((AnyHashable?) -> Void)? {
         get { self[OpenNowPlayingKey.self] }
         set { self[OpenNowPlayingKey.self] = newValue }
     }
@@ -45,6 +53,16 @@ extension EnvironmentValues {
         get { self[RootTabActivationKey.self] }
         set { self[RootTabActivationKey.self] = newValue }
     }
+
+    var nowPlayingFocusRestorationGeneration: Int {
+        get { self[NowPlayingFocusRestorationGenerationKey.self] }
+        set { self[NowPlayingFocusRestorationGenerationKey.self] = newValue }
+    }
+
+    var nowPlayingFocusRestorationID: AnyHashable? {
+        get { self[NowPlayingFocusRestorationIDKey.self] }
+        set { self[NowPlayingFocusRestorationIDKey.self] = newValue }
+    }
 }
 
 private enum RootTab: Hashable {
@@ -62,9 +80,9 @@ private struct NavigationFocusRestorationState {
     var route: AppRoute?
 }
 
-private enum NowPlayingEntry: Equatable {
-    case contextual
-    case tabBar
+private struct TrackFocusRestorationState {
+    var generation = 0
+    var trackID: AnyHashable?
 }
 
 struct AppShellView: View {
@@ -74,7 +92,6 @@ struct AppShellView: View {
     @Environment(PlayerService.self) private var player
     @Environment(ToastCenter.self) private var toast
     @State private var selectedTab = RootTab.listenNow
-    @State private var lastContentTab = RootTab.listenNow
     @State private var listenNowPath: [AppRoute] = []
     @State private var browsePath: [AppRoute] = []
     @State private var searchPath: [AppRoute] = []
@@ -83,13 +100,16 @@ struct AppShellView: View {
     @State private var searchSession = SearchSession()
     @State private var rootActivationGenerations: [RootTab: Int] = [:]
     @State private var navigationFocusRestorations: [RootTab: NavigationFocusRestorationState] = [:]
-    @State private var isNowPlayingPresented = false
-    @State private var nowPlayingEntry: NowPlayingEntry?
+    @State private var trackFocusRestorations: [RootTab: TrackFocusRestorationState] = [:]
+    @State private var lastContentTab = RootTab.listenNow
+    @State private var contextualReturnFocusID: AnyHashable?
+    @State private var nowPlayingPresentation = NowPlayingPresentationState()
+    @State private var nowPlayingActivationGeneration = 0
 
     var body: some View {
         ZStack {
             TVBackground()
-            TabView(selection: $selectedTab) {
+            TabView(selection: rootTabSelection) {
                 tabNavigation(tab: .listenNow, path: $listenNowPath) {
                     HomeView()
                 }
@@ -119,43 +139,28 @@ struct AppShellView: View {
                     .tabItem { Label("正在播放", systemImage: "music.note") }
             }
             .tint(TVTheme.accent)
-            .disabled(isNowPlayingPresented)
+            .disabled(nowPlayingPresentation.isPresented)
 
             toastOverlay
 
-            if isNowPlayingPresented {
-                NowPlayingView(onClose: dismissNowPlaying)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .transition(.opacity.combined(with: .scale(scale: 1.015)))
-                    .zIndex(10)
+            if nowPlayingPresentation.isPresented {
+                NowPlayingView(
+                    isActive: true,
+                    activationGeneration: nowPlayingActivationGeneration,
+                    onDismiss: dismissNowPlaying
+                )
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .zIndex(10)
             }
         }
-        .environment(\.openNowPlaying, { presentNowPlaying() })
+        .environment(\.openNowPlaying, presentContextualNowPlaying)
         .modifier(
             ConditionalExitCommand(
-                isActive: selectedNavigationDepth > 0 && !isNowPlayingPresented,
+                isActive: selectedNavigationDepth > 0 && !nowPlayingPresentation.isPresented,
                 action: popSelectedNavigation
             )
         )
         .animation(reduceMotion ? nil : .easeOut(duration: 0.2), value: toast.current)
-        .animation(reduceMotion ? nil : .easeOut(duration: 0.22), value: isNowPlayingPresented)
-        .onChange(of: selectedTab) { oldTab, newTab in
-            if oldTab != newTab { stopMVIfNeeded(in: oldTab) }
-            if newTab == .nowPlaying {
-                if oldTab != .nowPlaying {
-                    lastContentTab = oldTab
-                    if nowPlayingEntry == nil {
-                        nowPlayingEntry = .tabBar
-                    }
-                }
-                isNowPlayingPresented = true
-            } else if oldTab != .nowPlaying {
-                if oldTab != newTab {
-                    resetRootPresentation(for: newTab)
-                }
-                lastContentTab = newTab
-            }
-        }
         .onPlayPauseCommand {
             player.togglePlayPause()
         }
@@ -177,6 +182,28 @@ struct AppShellView: View {
         case .library: libraryPath.count
         case .nowPlaying: 0
         }
+    }
+
+    private var rootTabSelection: Binding<RootTab> {
+        Binding(
+            get: { selectedTab },
+            set: { requestedTab in
+                guard requestedTab != selectedTab else { return }
+                if requestedTab == .nowPlaying {
+                    let contentTab = selectedTab
+                    guard contentTab.isContentTab else { return }
+                    stopMVIfNeeded(in: contentTab)
+                    lastContentTab = contentTab
+                    presentNowPlaying(from: .tabBar)
+                    return
+                }
+
+                stopMVIfNeeded(in: selectedTab)
+                selectedTab = requestedTab
+                lastContentTab = requestedTab
+                resetRootPresentation(for: requestedTab)
+            }
+        )
     }
 
     private func stopMVIfNeeded(in tab: RootTab) {
@@ -209,25 +236,39 @@ struct AppShellView: View {
         }
     }
 
-    private func presentNowPlaying() {
-        guard !isNowPlayingPresented else { return }
-        if selectedTab != .nowPlaying {
-            lastContentTab = selectedTab
-            nowPlayingEntry = .contextual
-            selectedTab = .nowPlaying
+    private func presentContextualNowPlaying(returningTo focusID: AnyHashable?) {
+        if nowPlayingPresentation.isPresented {
+            nowPlayingActivationGeneration &+= 1
+            return
         }
-        isNowPlayingPresented = true
+        contextualReturnFocusID = focusID
+        stopMVIfNeeded(in: selectedTab)
+        presentNowPlaying(from: .contextual)
+    }
+
+    private func presentNowPlaying(from source: NowPlayingPresentationSource) {
+        nowPlayingPresentation.present(from: source)
+        nowPlayingActivationGeneration &+= 1
     }
 
     private func dismissNowPlaying() {
-        guard isNowPlayingPresented else { return }
-        let destination = lastContentTab
-        let shouldResetDestination = nowPlayingEntry == .tabBar
-        nowPlayingEntry = nil
-        selectedTab = destination
-        isNowPlayingPresented = false
-        if shouldResetDestination {
-            resetRootPresentation(for: destination)
+        guard let source = nowPlayingPresentation.dismiss() else { return }
+        if source == .contextual {
+            let destination = selectedTab
+            let focusID = contextualReturnFocusID
+            contextualReturnFocusID = nil
+            Task { @MainActor in
+                await Task.yield()
+                requestTrackFocusRestoration(focusID, in: destination)
+            }
+        } else {
+            let destination = lastContentTab
+            Task { @MainActor in
+                await Task.yield()
+                guard !nowPlayingPresentation.isPresented,
+                      selectedTab == destination else { return }
+                resetRootPresentation(for: destination)
+            }
         }
     }
 
@@ -258,6 +299,7 @@ struct AppShellView: View {
         @ViewBuilder content: () -> Content
     ) -> some View {
         let restoration = navigationFocusRestorations[tab] ?? NavigationFocusRestorationState()
+        let trackRestoration = trackFocusRestorations[tab] ?? TrackFocusRestorationState()
         return NavigationStack(path: path) {
             content()
                 .navigationDestination(for: AppRoute.self) { route in
@@ -279,6 +321,8 @@ struct AppShellView: View {
         .environment(\.rootTabActivationGeneration, rootActivationGenerations[tab] ?? 0)
         .environment(\.navigationFocusRestorationGeneration, restoration.generation)
         .environment(\.navigationFocusRestorationRoute, restoration.route)
+        .environment(\.nowPlayingFocusRestorationGeneration, trackRestoration.generation)
+        .environment(\.nowPlayingFocusRestorationID, trackRestoration.trackID)
     }
 
     private func resetRootPresentation(for tab: RootTab) {
@@ -295,6 +339,14 @@ struct AppShellView: View {
         restoration.route = route
         restoration.generation &+= 1
         navigationFocusRestorations[tab] = restoration
+    }
+
+    private func requestTrackFocusRestoration(_ trackID: AnyHashable?, in tab: RootTab) {
+        guard tab.isContentTab, let trackID else { return }
+        var restoration = trackFocusRestorations[tab] ?? TrackFocusRestorationState()
+        restoration.trackID = trackID
+        restoration.generation &+= 1
+        trackFocusRestorations[tab] = restoration
     }
 }
 

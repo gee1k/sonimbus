@@ -14,6 +14,7 @@ let package = Package(
             exclude: ["AccountStore.swift", "PlayerService.swift", "MediaTransferService.swift"],
             sources: [
                 "Models.swift",
+                "NowPlayingInteraction.swift",
                 "LyricsParser.swift",
                 "NeteaseCrypto.swift",
                 "NeteaseClient.swift",

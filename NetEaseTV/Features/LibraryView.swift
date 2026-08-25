@@ -447,6 +447,7 @@ struct RecentPlaysView: View {
     @State private var isLoading = true
     @State private var errorMessage: String?
     @State private var loadGeneration = 0
+    @FocusState private var focusedTrackID: AnyHashable?
 
     private var visibleRecords: [PlayRecordItem] {
         let visibleIDs = Set(player.visibleTracks(records.map(\.song)).map(\.id))
@@ -472,7 +473,7 @@ struct RecentPlaysView: View {
                 .frame(width: 420)
                 Button {
                     player.play(visibleRecords.map(\.song), source: .recent)
-                    openNowPlaying?()
+                    openNowPlaying?(nil)
                 } label: {
                     Label("播放全部", systemImage: "play.fill")
                 }
@@ -514,7 +515,8 @@ struct RecentPlaysView: View {
                             track: record.song,
                             index: index,
                             tracks: visibleRecords.map(\.song),
-                            source: .recent
+                            source: .recent,
+                            focusBinding: $focusedTrackID
                         )
                     }
                 }
@@ -564,6 +566,7 @@ struct CloudMusicView: View {
     @State private var matchingItem: CloudSongItem?
     @State private var itemPendingDeletion: CloudSongItem?
     @State private var isDeleting = false
+    @FocusState private var focusedTrackID: AnyHashable?
 
     private var items: [CloudSongItem] { response?.data ?? [] }
     private var tracks: [Track] { items.compactMap(\.playableTrack) }
@@ -587,7 +590,7 @@ struct CloudMusicView: View {
                 .buttonStyle(TVPillButtonStyle())
                 Button {
                     player.play(tracks, source: .cloud)
-                    openNowPlaying?()
+                    openNowPlaying?(nil)
                 } label: {
                     Label("播放全部", systemImage: "play.fill")
                 }
@@ -665,7 +668,8 @@ struct CloudMusicView: View {
                                 tracks: tracks,
                                 source: .cloud,
                                 cloudMatchAction: { matchingItem = item },
-                                cloudDeleteAction: { itemPendingDeletion = item }
+                                cloudDeleteAction: { itemPendingDeletion = item },
+                                focusBinding: $focusedTrackID
                             )
                         }
                     }

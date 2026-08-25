@@ -370,6 +370,8 @@ struct MVCard: View {
 
 struct TrackCard: View {
     @Environment(\.openNowPlaying) private var openNowPlaying
+    @Environment(\.nowPlayingFocusRestorationGeneration) private var focusRestorationGeneration
+    @Environment(\.nowPlayingFocusRestorationID) private var focusRestorationID
     @Environment(AccountStore.self) private var account
     @Environment(PlayerService.self) private var player
 
@@ -377,11 +379,12 @@ struct TrackCard: View {
     let tracks: [Track]
     let source: PlaySource
     var width: CGFloat = 250
+    var focusBinding: FocusState<AnyHashable?>.Binding? = nil
 
     var body: some View {
         Button {
             player.play(tracks, source: source, startingAt: track)
-            openNowPlaying?()
+            presentNowPlaying()
         } label: {
             VStack(alignment: .leading, spacing: 12) {
                 ArtworkView(url: track.artworkURL)
@@ -397,6 +400,8 @@ struct TrackCard: View {
             .frame(width: width, alignment: .leading)
         }
         .buttonStyle(TVCardButtonStyle())
+        .modifier(OptionalTrackFocus(target: AnyHashable(track.id), binding: focusBinding))
+        .task(id: focusRestorationGeneration) { restoreFocusIfNeeded() }
         .contextMenu {
             Button("下一首播放") { player.playNext(track) }
             Button("添加到队列") { player.addToQueue(track) }
@@ -405,7 +410,7 @@ struct TrackCard: View {
                !track.noCopyright {
                 Button("从这首开启心动模式") {
                     player.startIntelligence(from: track, playlistID: playlistID) {
-                        openNowPlaying?()
+                        presentNowPlaying()
                     }
                 }
             }
@@ -423,11 +428,24 @@ struct TrackCard: View {
             }
         }
     }
+
+    private func presentNowPlaying() {
+        openNowPlaying?(AnyHashable(track.id))
+    }
+
+    @MainActor
+    private func restoreFocusIfNeeded() {
+        let target = AnyHashable(track.id)
+        guard focusRestorationID == target, let focusBinding else { return }
+        focusBinding.wrappedValue = target
+    }
 }
 
 struct TrackRow: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.openNowPlaying) private var openNowPlaying
+    @Environment(\.nowPlayingFocusRestorationGeneration) private var focusRestorationGeneration
+    @Environment(\.nowPlayingFocusRestorationID) private var focusRestorationID
     @Environment(AccountStore.self) private var account
     @Environment(PlayerService.self) private var player
 
@@ -437,11 +455,12 @@ struct TrackRow: View {
     let source: PlaySource
     var cloudMatchAction: (() -> Void)?
     var cloudDeleteAction: (() -> Void)?
+    var focusBinding: FocusState<AnyHashable?>.Binding? = nil
 
     var body: some View {
         Button {
             player.play(tracks, source: source, startingAt: track)
-            openNowPlaying?()
+            presentNowPlaying()
         } label: {
             HStack(spacing: 18) {
                 ZStack {
@@ -499,10 +518,12 @@ struct TrackRow: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(TrackRowButtonStyle())
+        .modifier(OptionalTrackFocus(target: AnyHashable(track.id), binding: focusBinding))
+        .task(id: focusRestorationGeneration) { restoreFocusIfNeeded() }
         .contextMenu {
             Button("立即播放") {
                 player.play(tracks, source: source, startingAt: track)
-                openNowPlaying?()
+                presentNowPlaying()
             }
             Button("下一首播放") { player.playNext(track) }
             Button("添加到队列") { player.addToQueue(track) }
@@ -511,7 +532,7 @@ struct TrackRow: View {
                !track.noCopyright {
                 Button("从这首开启心动模式") {
                     player.startIntelligence(from: track, playlistID: playlistID) {
-                        openNowPlaying?()
+                        presentNowPlaying()
                     }
                 }
             }
@@ -541,6 +562,31 @@ struct TrackRow: View {
                     cloudDeleteAction()
                 }
             }
+        }
+    }
+
+    private func presentNowPlaying() {
+        openNowPlaying?(AnyHashable(track.id))
+    }
+
+    @MainActor
+    private func restoreFocusIfNeeded() {
+        let target = AnyHashable(track.id)
+        guard focusRestorationID == target, let focusBinding else { return }
+        focusBinding.wrappedValue = target
+    }
+}
+
+private struct OptionalTrackFocus: ViewModifier {
+    let target: AnyHashable
+    let binding: FocusState<AnyHashable?>.Binding?
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if let binding {
+            content.focused(binding, equals: target)
+        } else {
+            content
         }
     }
 }

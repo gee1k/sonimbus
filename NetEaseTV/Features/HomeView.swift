@@ -16,6 +16,7 @@ struct HomeView: View {
     @State private var loadGeneration = 0
     @State private var lastFocusedRoute: AppRoute?
     @FocusState private var focusedRoute: AppRoute?
+    @FocusState private var focusedTrackID: AnyHashable?
 
     var body: some View {
         ScrollViewReader { proxy in
@@ -27,7 +28,12 @@ struct HomeView: View {
                 if !visibleRecentTracks.isEmpty {
                     HorizontalShelf(title: "最近播放", subtitle: "继续你刚才的音乐") {
                         ForEach(visibleRecentTracks.prefix(12)) { track in
-                            TrackCard(track: track, tracks: visibleRecentTracks, source: .recent)
+                            TrackCard(
+                                track: track,
+                                tracks: visibleRecentTracks,
+                                source: .recent,
+                                focusBinding: $focusedTrackID
+                            )
                         }
                     }
                 }
@@ -35,7 +41,12 @@ struct HomeView: View {
                 if !visibleNewSongs.isEmpty {
                     HorizontalShelf(title: "为你推荐的新歌", subtitle: "根据你的口味持续更新") {
                         ForEach(visibleNewSongs) { track in
-                            TrackCard(track: track, tracks: visibleNewSongs, source: .newSongs)
+                            TrackCard(
+                                track: track,
+                                tracks: visibleNewSongs,
+                                source: .newSongs,
+                                focusBinding: $focusedTrackID
+                            )
                         }
                     }
                 }
@@ -81,6 +92,7 @@ struct HomeView: View {
         }
         .onChange(of: rootTabActivationGeneration) { _, _ in
             focusedRoute = nil
+            focusedTrackID = nil
             lastFocusedRoute = nil
         }
     }
@@ -162,7 +174,7 @@ struct HomeView: View {
             Button {
                 if account.isLoggedIn {
                     player.startPersonalFM()
-                    openNowPlaying?()
+                    openNowPlaying?(nil)
                 } else {
                     showLogin = true
                 }
