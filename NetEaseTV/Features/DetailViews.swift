@@ -4,10 +4,21 @@ import SwiftUI
 import UIKit
 
 struct DailySongsView: View {
-    @State private var tracks: [Track] = []
+    @Environment(AccountStore.self) private var account
+    @Environment(ContentStore.self) private var content
     @State private var isLoading = true
     @State private var errorMessage: String?
     @State private var loadGeneration = 0
+
+    private var contentKey: ContentStore.DailySongsKey? {
+        (account.profile?.userId).map { .current(userID: $0) }
+    }
+
+    private var cachedTracks: [Track]? {
+        contentKey.flatMap { content.dailySongs.value(for: $0) }
+    }
+
+    private var tracks: [Track] { cachedTracks ?? [] }
 
     var body: some View {
         Group {
@@ -21,8 +32,14 @@ struct DailySongsView: View {
                     tracks: tracks,
                     source: .daily
                 )
-            } else if isLoading {
+            } else if isLoading && cachedTracks == nil {
                 LoadStateView(title: "正在生成今日推荐")
+            } else if errorMessage == nil {
+                EmptyStateView(
+                    title: "今天还没有推荐歌曲",
+                    message: "稍后再来看看，今日推荐会自动同步。",
+                    symbol: "sparkles"
+                )
             } else {
                 LoadStateView(title: "暂时无法载入每日推荐", message: errorMessage) {
                     Task { await load() }
@@ -30,20 +47,31 @@ struct DailySongsView: View {
             }
         }
         .background(TVBackground(tint: TVTheme.magenta))
-        .task { await load() }
+        .task(id: contentKey) { await load() }
     }
 
     @MainActor
     private func load() async {
         loadGeneration &+= 1
         let generation = loadGeneration
+        guard let contentKey else {
+            isLoading = false
+            errorMessage = "登录后才能查看每日推荐"
+            return
+        }
+        if content.dailySongs.value(for: contentKey) != nil {
+            isLoading = false
+            errorMessage = nil
+            return
+        }
         isLoading = true
         errorMessage = nil
         do {
-            let result = try await NeteaseAPI.dailySongs()
+            let result = try await content.dailySongs.load(for: contentKey) { _ in
+                try await NeteaseAPI.dailySongs()
+            }
             guard generation == loadGeneration, !Task.isCancelled else { return }
-            tracks = result
-            if tracks.isEmpty {
+            if result.isEmpty {
                 errorMessage = "今天还没有可播放的推荐歌曲"
             }
         } catch {
@@ -58,15 +86,28 @@ struct PlaylistDetailView: View {
     let playlistID: Int
 
     @Environment(AccountStore.self) private var account
-    @State private var detail: PlaylistDetail?
+    @Environment(ContentStore.self) private var content
     @State private var isLoading = true
     @State private var errorMessage: String?
     @State private var loadGeneration = 0
     @State private var showEditor = false
 
+    private var detailKey: ContentStore.PlaylistKey {
+        ContentStore.PlaylistKey(
+            playlistID: playlistID,
+            userID: account.profile?.userId,
+            revision: account.playlistRevision
+        )
+    }
+
     var body: some View {
+        let displayedDetail = content.playlists.value(for: detailKey)
+            ?? content.playlists.latest {
+                $0.playlistID == playlistID && $0.userID == account.profile?.userId
+            }
+
         Group {
-            if let detail {
+            if let detail = displayedDetail {
                 TrackCollectionView(
                     title: detail.name,
                     subtitle: detail.creator?.nickname,
@@ -95,9 +136,9 @@ struct PlaylistDetailView: View {
             }
         }
         .background(TVBackground(tint: TVTheme.accent))
-        .task(id: account.playlistRevision) { await load() }
+        .task(id: detailKey) { await load() }
         .fullScreenCover(isPresented: $showEditor) {
-            if let detail {
+            if let detail = displayedDetail {
                 PlaylistEditView(detail: detail)
             }
         }
@@ -118,12 +159,22 @@ struct PlaylistDetailView: View {
     private func load() async {
         loadGeneration &+= 1
         let generation = loadGeneration
-        isLoading = true
+        let key = detailKey
+        if content.playlists.value(for: key) != nil {
+            isLoading = false
+            errorMessage = nil
+            return
+        }
+
+        isLoading = content.playlists.latest {
+            $0.playlistID == playlistID && $0.userID == account.profile?.userId
+        } == nil
         errorMessage = nil
         do {
-            let result = try await NeteaseAPI.playlist(id: playlistID).playlist
+            _ = try await content.playlists.load(for: key) { key in
+                try await NeteaseAPI.playlist(id: key.playlistID).playlist
+            }
             guard generation == loadGeneration, !Task.isCancelled else { return }
-            detail = result
         } catch {
             guard generation == loadGeneration, !Task.isCancelled else { return }
             errorMessage = error.localizedDescription
@@ -136,10 +187,14 @@ struct AlbumDetailView: View {
     let albumID: Int
 
     @Environment(AccountStore.self) private var account
-    @State private var response: AlbumDetailResponse?
+    @Environment(ContentStore.self) private var content
     @State private var isLoading = true
     @State private var errorMessage: String?
     @State private var loadGeneration = 0
+
+    private var response: AlbumDetailResponse? {
+        content.albums.value(for: albumID)
+    }
 
     var body: some View {
         Group {
@@ -175,12 +230,18 @@ struct AlbumDetailView: View {
     private func load() async {
         loadGeneration &+= 1
         let generation = loadGeneration
+        if content.albums.value(for: albumID) != nil {
+            isLoading = false
+            errorMessage = nil
+            return
+        }
         isLoading = true
         errorMessage = nil
         do {
-            let result = try await NeteaseAPI.album(id: albumID)
+            _ = try await content.albums.load(for: albumID) { albumID in
+                try await NeteaseAPI.album(id: albumID)
+            }
             guard generation == loadGeneration, !Task.isCancelled else { return }
-            response = result
         } catch {
             guard generation == loadGeneration, !Task.isCancelled else { return }
             errorMessage = error.localizedDescription
@@ -193,17 +254,19 @@ struct ArtistDetailView: View {
     let artistID: Int
 
     @Environment(AccountStore.self) private var account
-    @State private var response: NeteaseAPI.ArtistResponse?
-    @State private var albums: [AlbumSummary] = []
-    @State private var mvs: [MVSummary] = []
-    @State private var similarArtists: [ArtistSummary] = []
+    @Environment(ContentStore.self) private var content
     @State private var isLoading = true
     @State private var errorMessage: String?
     @State private var loadGeneration = 0
 
+    private var detailContent: ContentStore.ArtistDetailContent? {
+        content.artists.value(for: artistID)
+    }
+
     var body: some View {
         Group {
-            if let response {
+            if let detailContent {
+                let response = detailContent.response
                 TrackCollectionView(
                     title: response.artist.name,
                     subtitle: response.artist.alias.first,
@@ -211,8 +274,8 @@ struct ArtistDetailView: View {
                     artworkURL: response.artist.artworkURL,
                     metadata: [
                         "热门歌曲 · \(response.hotSongs.count) 首",
-                        "\(albums.count) 张专辑",
-                        mvs.isEmpty ? nil : "\(mvs.count) 支 MV",
+                        "\(detailContent.albums.count) 张专辑",
+                        detailContent.mvs.isEmpty ? nil : "\(detailContent.mvs.count) 支 MV",
                     ].compactMap { $0 }.joined(separator: " · "),
                     tracks: response.hotSongs,
                     source: .artist(response.artist.id),
@@ -222,9 +285,9 @@ struct ArtistDetailView: View {
                     collectionAction: account.isLoggedIn ? {
                         Task { await account.toggleArtist(response.artist) }
                     } : nil,
-                    relatedAlbums: albums,
-                    relatedMVs: mvs,
-                    relatedArtists: similarArtists
+                    relatedAlbums: detailContent.albums,
+                    relatedMVs: detailContent.mvs,
+                    relatedArtists: detailContent.similarArtists
                 )
             } else if isLoading {
                 LoadStateView(title: "正在载入歌手")
@@ -242,21 +305,27 @@ struct ArtistDetailView: View {
     private func load() async {
         loadGeneration &+= 1
         let generation = loadGeneration
+        if content.artists.value(for: artistID) != nil {
+            isLoading = false
+            errorMessage = nil
+            return
+        }
         isLoading = true
         errorMessage = nil
-        async let albumRequest = try? NeteaseAPI.artistAlbums(id: artistID)
-        async let mvRequest = try? NeteaseAPI.artistMVs(id: artistID)
-        async let similarRequest = try? NeteaseAPI.similarArtists(id: artistID)
         do {
-            let detail = try await NeteaseAPI.artist(id: artistID)
-            let albumResult = (await albumRequest)?.hotAlbums ?? []
-            let mvResult = (await mvRequest)?.mvs ?? []
-            let artistResult = await similarRequest ?? []
+            _ = try await content.artists.load(for: artistID) { artistID in
+                async let albumRequest = try? NeteaseAPI.artistAlbums(id: artistID)
+                async let mvRequest = try? NeteaseAPI.artistMVs(id: artistID)
+                async let similarRequest = try? NeteaseAPI.similarArtists(id: artistID)
+                let detail = try await NeteaseAPI.artist(id: artistID)
+                return ContentStore.ArtistDetailContent(
+                    response: detail,
+                    albums: (await albumRequest)?.hotAlbums ?? [],
+                    mvs: (await mvRequest)?.mvs ?? [],
+                    similarArtists: await similarRequest ?? []
+                )
+            }
             guard generation == loadGeneration, !Task.isCancelled else { return }
-            albums = albumResult
-            mvs = mvResult
-            similarArtists = artistResult
-            response = detail
         } catch {
             guard generation == loadGeneration, !Task.isCancelled else { return }
             errorMessage = error.localizedDescription
@@ -559,8 +628,8 @@ struct MVDetailView: View {
     @Environment(\.handlesNavigationExit) private var handlesNavigationExit
     @Environment(\.scenePhase) private var scenePhase
     @Environment(PlayerService.self) private var audioPlayer
+    @Environment(ContentStore.self) private var content
     private let mvPlayback = MVPlaybackController.shared
-    @State private var detail: MVSummary?
     @State private var isLoading = true
     @State private var errorMessage: String?
     @State private var loadGeneration = 0
@@ -571,7 +640,7 @@ struct MVDetailView: View {
     }
 
     private var displayedDetail: MVSummary? {
-        mvPlayback.currentDetail ?? detail
+        mvPlayback.currentDetail ?? content.mvs.value(for: mvID)?.detail
     }
 
     var body: some View {
@@ -785,22 +854,30 @@ struct MVDetailView: View {
         mvPlayback.activate(mvID: mvID)
         loadGeneration &+= 1
         let generation = loadGeneration
+        if let cached = content.mvs.value(for: mvID) {
+            mvPlayback.enrichQueue(cached.relatedMVs, around: cached.detail)
+            isLoading = false
+            errorMessage = nil
+            return
+        }
         isLoading = true
         errorMessage = nil
         do {
-            let response = try await NeteaseAPI.mvDetail(id: mvID)
-            guard generation == loadGeneration, !Task.isCancelled else { return }
-            detail = response
-            mvPlayback.enrichQueue([], around: response)
-            if mvPlayback.queue.count <= 1,
-               let artistID = response.artists.first(where: { $0.id > 0 })?.id,
-               let related = (try? await NeteaseAPI.artistMVs(id: artistID, limit: 50))?.mvs {
-                guard generation == loadGeneration, !Task.isCancelled else { return }
-                mvPlayback.enrichQueue(related, around: response)
+            let response = try await content.mvs.load(for: mvID) { mvID in
+                let detail = try await NeteaseAPI.mvDetail(id: mvID)
+                let artistID = detail.artists.first(where: { $0.id > 0 })?.id
+                let related: [MVSummary]
+                if let artistID {
+                    related = (try? await NeteaseAPI.artistMVs(id: artistID, limit: 50))?.mvs ?? []
+                } else {
+                    related = []
+                }
+                return ContentStore.MVDetailContent(detail: detail, relatedMVs: related)
             }
+            guard generation == loadGeneration, !Task.isCancelled else { return }
+            mvPlayback.enrichQueue(response.relatedMVs, around: response.detail)
         } catch {
             guard generation == loadGeneration, !Task.isCancelled else { return }
-            detail = nil
             errorMessage = error.localizedDescription
         }
         if generation == loadGeneration { isLoading = false }

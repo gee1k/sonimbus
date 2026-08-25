@@ -441,13 +441,25 @@ struct RecentPlaysView: View {
     @Environment(\.openNowPlaying) private var openNowPlaying
     @Environment(AccountStore.self) private var account
     @Environment(PlayerService.self) private var player
+    @Environment(ContentStore.self) private var contentStore
 
-    @State private var records: [PlayRecordItem] = []
     @State private var weekOnly = true
     @State private var isLoading = true
     @State private var errorMessage: String?
     @State private var loadGeneration = 0
     @FocusState private var focusedTrackID: AnyHashable?
+
+    private var contentKey: ContentStore.PlayRecordsKey? {
+        (account.profile?.userId).map {
+            ContentStore.PlayRecordsKey(userID: $0, weekOnly: weekOnly)
+        }
+    }
+
+    private var cachedRecords: [PlayRecordItem]? {
+        contentKey.flatMap { contentStore.playRecords.value(for: $0) }
+    }
+
+    private var records: [PlayRecordItem] { cachedRecords ?? [] }
 
     private var visibleRecords: [PlayRecordItem] {
         let visibleIDs = Set(player.visibleTracks(records.map(\.song)).map(\.id))
@@ -493,9 +505,9 @@ struct RecentPlaysView: View {
 
     @ViewBuilder
     private var content: some View {
-        if isLoading {
+        if isLoading && cachedRecords == nil {
             LoadStateView(title: "正在同步播放记录")
-        } else if let errorMessage {
+        } else if let errorMessage, cachedRecords == nil {
             LoadStateView(title: "无法载入播放记录", message: errorMessage) {
                 Task { await load() }
             }
@@ -533,18 +545,24 @@ struct RecentPlaysView: View {
         let requestedWeekOnly = weekOnly
         guard let userID = account.profile?.userId else {
             isLoading = false
-            records = []
+            return
+        }
+        let key = ContentStore.PlayRecordsKey(userID: userID, weekOnly: requestedWeekOnly)
+        if contentStore.playRecords.value(for: key) != nil {
+            isLoading = false
+            errorMessage = nil
             return
         }
         isLoading = true
         errorMessage = nil
         do {
-            let result = try await NeteaseAPI.playRecords(userID: userID, week: requestedWeekOnly)
+            _ = try await contentStore.playRecords.load(for: key) { key in
+                try await NeteaseAPI.playRecords(userID: key.userID, week: key.weekOnly)
+            }
             guard generation == loadGeneration,
                   !Task.isCancelled,
                   requestedWeekOnly == weekOnly,
                   account.profile?.userId == userID else { return }
-            records = result
         } catch {
             guard generation == loadGeneration, !Task.isCancelled else { return }
             errorMessage = error.localizedDescription
@@ -557,8 +575,8 @@ struct CloudMusicView: View {
     @Environment(\.openNowPlaying) private var openNowPlaying
     @Environment(AccountStore.self) private var account
     @Environment(PlayerService.self) private var player
+    @Environment(ContentStore.self) private var contentStore
 
-    @State private var response: NeteaseAPI.CloudResponse?
     @State private var isLoading = true
     @State private var errorMessage: String?
     @State private var loadGeneration = 0
@@ -567,6 +585,11 @@ struct CloudMusicView: View {
     @State private var itemPendingDeletion: CloudSongItem?
     @State private var isDeleting = false
     @FocusState private var focusedTrackID: AnyHashable?
+
+    private var contentKey: Int? { account.profile?.userId }
+    private var response: NeteaseAPI.CloudResponse? {
+        contentKey.flatMap { contentStore.cloudMusic.value(for: $0) }
+    }
 
     private var items: [CloudSongItem] { response?.data ?? [] }
     private var tracks: [Track] { items.compactMap(\.playableTrack) }
@@ -608,12 +631,12 @@ struct CloudMusicView: View {
         .task { await load() }
         .fullScreenCover(isPresented: $showUpload) {
             CloudUploadView {
-                Task { await load() }
+                Task { await load(forceRefresh: true) }
             }
         }
         .fullScreenCover(item: $matchingItem) { item in
             CloudMatchView(item: item) {
-                Task { await load() }
+                Task { await load(forceRefresh: true) }
             }
         }
         .alert(
@@ -645,9 +668,9 @@ struct CloudMusicView: View {
 
     @ViewBuilder
     private var content: some View {
-        if isLoading {
+        if isLoading && response == nil {
             LoadStateView(title: "正在同步音乐云盘")
-        } else if let errorMessage {
+        } else if let errorMessage, response == nil {
             LoadStateView(title: "无法载入音乐云盘", message: errorMessage) {
                 Task { await load() }
             }
@@ -681,15 +704,32 @@ struct CloudMusicView: View {
     }
 
     @MainActor
-    private func load() async {
+    private func load(forceRefresh: Bool = false) async {
         loadGeneration &+= 1
         let generation = loadGeneration
-        isLoading = true
+        guard let contentKey else {
+            isLoading = false
+            errorMessage = "登录后才能使用音乐云盘"
+            return
+        }
+        if !forceRefresh, contentStore.cloudMusic.value(for: contentKey) != nil {
+            isLoading = false
+            errorMessage = nil
+            return
+        }
+        isLoading = contentStore.cloudMusic.value(for: contentKey) == nil
         errorMessage = nil
         do {
-            let result = try await NeteaseAPI.cloudSongs()
+            if forceRefresh {
+                _ = try await contentStore.cloudMusic.refresh(for: contentKey) { _ in
+                    try await NeteaseAPI.cloudSongs()
+                }
+            } else {
+                _ = try await contentStore.cloudMusic.load(for: contentKey) { _ in
+                    try await NeteaseAPI.cloudSongs()
+                }
+            }
             guard generation == loadGeneration, !Task.isCancelled else { return }
-            response = result
         } catch {
             guard generation == loadGeneration, !Task.isCancelled else { return }
             errorMessage = error.localizedDescription
@@ -704,7 +744,7 @@ struct CloudMusicView: View {
         do {
             try await NeteaseAPI.deleteCloudSong(id: item.songId)
             ToastCenter.shared.show("已从音乐云盘删除《\(item.songName ?? "歌曲")》")
-            await load()
+            await load(forceRefresh: true)
         } catch {
             ToastCenter.shared.show(error.localizedDescription)
         }

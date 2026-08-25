@@ -19,6 +19,7 @@ let package = Package(
                 "NeteaseCrypto.swift",
                 "NeteaseClient.swift",
                 "NeteaseAPI.swift",
+                "ContentStore.swift",
                 "UnblockService.swift",
             ],
             swiftSettings: [.swiftLanguageMode(.v5)]

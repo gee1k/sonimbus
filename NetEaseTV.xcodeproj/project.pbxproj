@@ -31,6 +31,7 @@
 		B00000000000000000000023 /* MediaTransferService.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000025 /* MediaTransferService.swift */; };
 		B00000000000000000000024 /* ManagementViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000026 /* ManagementViews.swift */; };
 		B00000000000000000000025 /* NowPlayingInteraction.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000027 /* NowPlayingInteraction.swift */; };
+		B00000000000000000000026 /* ContentStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000028 /* ContentStore.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -60,6 +61,7 @@
 		F00000000000000000000025 /* MediaTransferService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MediaTransferService.swift; sourceTree = "<group>"; };
 		F00000000000000000000026 /* ManagementViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ManagementViews.swift; sourceTree = "<group>"; };
 		F00000000000000000000027 /* NowPlayingInteraction.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NowPlayingInteraction.swift; sourceTree = "<group>"; };
+		F00000000000000000000028 /* ContentStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentStore.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -113,6 +115,7 @@
 				F00000000000000000000008 /* AccountStore.swift */,
 				F00000000000000000000009 /* PlayerService.swift */,
 				F00000000000000000000027 /* NowPlayingInteraction.swift */,
+				F00000000000000000000028 /* ContentStore.swift */,
 				F00000000000000000000024 /* UnblockService.swift */,
 				F00000000000000000000025 /* MediaTransferService.swift */,
 			);
@@ -241,6 +244,7 @@
 				B00000000000000000000008 /* AccountStore.swift in Sources */,
 				B00000000000000000000009 /* PlayerService.swift in Sources */,
 				B00000000000000000000025 /* NowPlayingInteraction.swift in Sources */,
+				B00000000000000000000026 /* ContentStore.swift in Sources */,
 				B00000000000000000000022 /* UnblockService.swift in Sources */,
 				B00000000000000000000023 /* MediaTransferService.swift in Sources */,
 				B00000000000000000000010 /* Theme.swift in Sources */,
