@@ -1,6 +1,0 @@
-{
-  "images" : [
-    { "filename" : "icon-foreground.png", "idiom" : "universal", "scale" : "1x" }
-  ],
-  "info" : { "author" : "com.gee1k.neteasetv", "version" : 1 }
-}

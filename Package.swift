@@ -2,15 +2,15 @@
 import PackageDescription
 
 let package = Package(
-    name: "NetEaseTVCore",
+    name: "SonimbusCore",
     platforms: [.macOS(.v15), .tvOS(.v17)],
     products: [
-        .library(name: "NetEaseTVCore", targets: ["NetEaseTVCore"]),
+        .library(name: "SonimbusCore", targets: ["SonimbusCore"]),
     ],
     targets: [
         .target(
-            name: "NetEaseTVCore",
-            path: "NetEaseTV/Core",
+            name: "SonimbusCore",
+            path: "Sonimbus/Core",
             exclude: ["AccountStore.swift", "PlayerService.swift", "MediaTransferService.swift"],
             sources: [
                 "Models.swift",
@@ -25,8 +25,8 @@ let package = Package(
             swiftSettings: [.swiftLanguageMode(.v5)]
         ),
         .testTarget(
-            name: "NetEaseTVCoreTests",
-            dependencies: ["NetEaseTVCore"],
+            name: "SonimbusCoreTests",
+            dependencies: ["SonimbusCore"],
             path: "Tests",
             swiftSettings: [.swiftLanguageMode(.v5)]
         ),

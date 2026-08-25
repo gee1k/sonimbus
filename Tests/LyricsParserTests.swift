@@ -1,6 +1,6 @@
 import Foundation
 import Testing
-@testable import NetEaseTVCore
+@testable import SonimbusCore
 
 @Test("LRC 支持多时间戳与不同小数精度")
 func parsesMultipleTimestamps() {

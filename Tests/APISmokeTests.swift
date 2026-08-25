@@ -1,6 +1,6 @@
 import Foundation
 import Testing
-@testable import NetEaseTVCore
+@testable import SonimbusCore
 
 @Test("网易云公开推荐、详情和扫码接口可访问")
 func liveAPISmokeTest() async throws {

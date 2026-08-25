@@ -6,11 +6,11 @@ PROJECT_DIR=${SCRIPT_DIR:h}
 BUILD_DIR="$PROJECT_DIR/build/unsigned"
 PRODUCTS_DIR="$PROJECT_DIR/.build/UnsignedProducts"
 OBJECTS_DIR="$PROJECT_DIR/.build/UnsignedIntermediates"
-APP_PATH="$PRODUCTS_DIR/Release-appletvos/NetEaseTV.app"
+APP_PATH="$PRODUCTS_DIR/Release-appletvos/Sonimbus.app"
 
 xcodebuild -quiet \
-  -project "$PROJECT_DIR/NetEaseTV.xcodeproj" \
-  -target NetEaseTV \
+  -project "$PROJECT_DIR/Sonimbus.xcodeproj" \
+  -target Sonimbus \
   -configuration Release \
   -sdk appletvos \
   SYMROOT="$PRODUCTS_DIR" \
@@ -20,8 +20,8 @@ xcodebuild -quiet \
 
 rm -rf "$BUILD_DIR/Payload"
 mkdir -p "$BUILD_DIR/Payload"
-ditto --norsrc "$APP_PATH" "$BUILD_DIR/Payload/NetEaseTV.app"
+ditto --norsrc "$APP_PATH" "$BUILD_DIR/Payload/Sonimbus.app"
 cd "$BUILD_DIR"
-ditto -c -k --norsrc --keepParent Payload NetEaseTV-unsigned.ipa
-print "已生成：$BUILD_DIR/NetEaseTV-unsigned.ipa"
-print "注意：此包仅用于验证 IPA 结构，安装前仍需使用你的开发证书和描述文件签名。"
+ditto -c -k --norsrc --keepParent Payload Sonimbus-unsigned.ipa
+print "已生成：$BUILD_DIR/Sonimbus-unsigned.ipa"
+print "注意：此包仅用于验证 IPA 结构，不能上传 TestFlight 或直接安装。"

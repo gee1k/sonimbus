@@ -1,6 +1,6 @@
 import Foundation
 import Testing
-@testable import NetEaseTVCore
+@testable import SonimbusCore
 
 @Test("weapi 加密输出稳定且包含 RSA 密文")
 func weapiShape() {

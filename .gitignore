@@ -6,3 +6,9 @@ DerivedData/
 xcuserdata/
 *.ipa
 *.xcarchive
+*.cer
+*.mobileprovision
+*.p12
+*.p8
+.env
+.env.*

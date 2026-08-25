@@ -1,5 +1,5 @@
 import Testing
-@testable import NetEaseTVCore
+@testable import SonimbusCore
 
 @Test func contextualAndTabBarPresentationsRemainDistinct() {
     var presentation = NowPlayingPresentationState()

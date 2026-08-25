@@ -1,6 +1,6 @@
 import Foundation
 import Testing
-@testable import NetEaseTVCore
+@testable import SonimbusCore
 
 @MainActor
 @Test("内容缓存在有效期内复用且版本变化时重新载入")

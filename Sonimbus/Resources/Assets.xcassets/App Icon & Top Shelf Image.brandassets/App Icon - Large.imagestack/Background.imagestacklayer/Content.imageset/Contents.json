@@ -1,0 +1,6 @@
+{
+  "images" : [
+    { "filename" : "icon-background.jpg", "idiom" : "universal", "scale" : "1x" }
+  ],
+  "info" : { "author" : "com.svend.sonimbus", "version" : 1 }
+}

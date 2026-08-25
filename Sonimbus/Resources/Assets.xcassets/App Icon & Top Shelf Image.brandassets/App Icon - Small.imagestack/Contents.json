@@ -1,0 +1,13 @@
+{
+  "layers" : [
+    { "filename" : "Foreground.imagestacklayer" },
+    { "filename" : "Background.imagestacklayer" }
+  ],
+  "info" : {
+    "author" : "com.svend.sonimbus",
+    "version" : 1
+  },
+  "properties" : {
+    "canvasSize" : { "width" : 400, "height" : 240 }
+  }
+}

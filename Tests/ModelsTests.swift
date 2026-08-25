@@ -1,6 +1,6 @@
 import Foundation
 import Testing
-@testable import NetEaseTVCore
+@testable import SonimbusCore
 
 @Test("灰歌补全优先匹配前五项中时长接近的歌曲")
 func matchesAlternativeTrackByDuration() {
