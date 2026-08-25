@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="Sonimbus/Resources/AppIcon-v2.png" width="180" alt="云音厅图标">
+  <img src="docs/app-icon-rounded.png" width="180" alt="云音厅图标">
 </p>
 
 <h1 align="center">云音厅 · Sonimbus</h1>
