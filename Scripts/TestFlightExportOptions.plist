@@ -12,8 +12,6 @@
     <string>automatic</string>
     <key>stripSwiftSymbols</key>
     <true/>
-    <key>testFlightInternalTestingOnly</key>
-    <true/>
     <key>uploadSymbols</key>
     <true/>
 </dict>

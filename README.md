@@ -54,6 +54,16 @@
 - 🔊 **音质选择** — 标准、较高、极高、无损和高解析度无损，不可用时自动回退
 - 📺 **tvOS 系统集成** — 原生焦点交互、Remote Command、系统 Now Playing 与后台音频
 
+## 安装
+
+### 未签名 IPA
+
+从 [GitHub Releases](https://github.com/gee1k/sonimbus/releases) 下载最新的 `Sonimbus-tvOS-*-unsigned.ipa`，使用支持 tvOS 的签名工具以自己的 Apple Account 重新签名后安装。
+
+[Sideloadly](https://sideloadly.io/) 支持在 macOS 上与 Apple TV 配对并安装 tvOS IPA。免费 Apple Account 签名的应用通常需要每 7 天重新签名；使用第三方签名工具前，请自行了解其账号处理方式和使用风险。
+
+也可以按照下方步骤从源码直接使用 Xcode 运行。
+
 ## 环境
 
 - macOS 15 或更高版本
@@ -90,13 +100,19 @@ xcodebuild -project Sonimbus.xcodeproj \
 
 ### 本地打包
 
-没有开发证书时，可以生成一个无签名 IPA，用于检查应用包结构：
+没有开发证书时，可以生成供用户自行签名的未签名 IPA：
 
 ```bash
 ./Scripts/package-unsigned-ipa.sh
 ```
 
-输出位于 `build/unsigned/Sonimbus-unsigned.ipa`。无签名 IPA 不能直接安装到 Apple TV。
+输出路径包含工程当前的营销版本和 Build Number，例如：
+
+```text
+build/unsigned/1.1.0/1/Sonimbus-tvOS-1.1.0-build.1-unsigned.ipa
+```
+
+无签名 IPA 不能直接安装到 Apple TV，也不能上传 TestFlight；需要先使用用户自己的 Apple Account 完成签名。
 
 ## 测试
 

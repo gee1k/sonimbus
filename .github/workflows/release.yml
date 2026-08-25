@@ -1,0 +1,58 @@
+name: Release unsigned tvOS IPA
+
+on:
+  push:
+    tags:
+      - "v*-build.*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: macos-26
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate release version
+        shell: bash
+        run: |
+          if [[ ! "$GITHUB_REF_NAME" =~ ^v([0-9]+\.[0-9]+\.[0-9]+)-build\.([0-9]+(\.[0-9]+){0,2})$ ]]; then
+            echo "Unsupported release tag: $GITHUB_REF_NAME" >&2
+            echo "Expected format: v1.1.0-build.4" >&2
+            exit 2
+          fi
+
+          TAG_VERSION="${BASH_REMATCH[1]}"
+          TAG_BUILD_NUMBER="${BASH_REMATCH[2]}"
+          read -r PROJECT_VERSION PROJECT_BUILD_NUMBER < <(./Scripts/project-version.sh)
+
+          if [[ "$TAG_VERSION" != "$PROJECT_VERSION" ]]; then
+            echo "Tag version $TAG_VERSION does not match project version $PROJECT_VERSION." >&2
+            exit 3
+          fi
+
+          if [[ "$TAG_BUILD_NUMBER" != "$PROJECT_BUILD_NUMBER" ]]; then
+            echo "Tag build $TAG_BUILD_NUMBER does not match project build $PROJECT_BUILD_NUMBER." >&2
+            exit 4
+          fi
+
+          IPA_PATH="build/unsigned/$PROJECT_VERSION/$PROJECT_BUILD_NUMBER/Sonimbus-tvOS-${PROJECT_VERSION}-build.${PROJECT_BUILD_NUMBER}-unsigned.ipa"
+          echo "MARKETING_VERSION=$PROJECT_VERSION" >> "$GITHUB_ENV"
+          echo "BUILD_NUMBER=$PROJECT_BUILD_NUMBER" >> "$GITHUB_ENV"
+          echo "IPA_PATH=$IPA_PATH" >> "$GITHUB_ENV"
+
+      - name: Build unsigned tvOS IPA
+        run: ./Scripts/package-unsigned-ipa.sh
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            --verify-tag \
+            --latest \
+            --title "Sonimbus $MARKETING_VERSION (Build $BUILD_NUMBER)" \
+            --generate-notes \
+            "$IPA_PATH"
