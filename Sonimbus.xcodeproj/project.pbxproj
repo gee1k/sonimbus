@@ -26,7 +26,6 @@
 		B00000000000000000000018 /* DetailViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000018 /* DetailViews.swift */; };
 		B00000000000000000000019 /* NowPlayingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000019 /* NowPlayingView.swift */; };
 		B00000000000000000000020 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000020 /* Assets.xcassets */; };
-		B00000000000000000000021 /* AppIcon-v2.png in Resources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000023 /* AppIcon-v2.png */; };
 		B00000000000000000000022 /* UnblockService.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000024 /* UnblockService.swift */; };
 		B00000000000000000000023 /* MediaTransferService.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000025 /* MediaTransferService.swift */; };
 		B00000000000000000000024 /* ManagementViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000026 /* ManagementViews.swift */; };
@@ -83,7 +82,7 @@
 			);
 			sourceTree = "<group>";
 		};
-	E00000000000000000000002 /* Sonimbus */ = {
+		E00000000000000000000002 /* Sonimbus */ = {
 			isa = PBXGroup;
 			children = (
 				E00000000000000000000003 /* App */,
@@ -300,7 +299,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 0.2.0;
+				MARKETING_VERSION = 1.0.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.svend.sonimbus;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = appletvos;
@@ -324,7 +323,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 0.2.0;
+				MARKETING_VERSION = 1.0.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.svend.sonimbus;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = appletvos;

@@ -1,6 +1,7 @@
 {
   "images" : [
-    { "filename" : "icon-background.jpg", "idiom" : "universal", "scale" : "1x" }
+    { "filename" : "icon-background.jpg", "idiom" : "universal", "scale" : "1x" },
+    { "filename" : "icon-background@2x.jpg", "idiom" : "universal", "scale" : "2x" }
   ],
   "info" : { "author" : "com.svend.sonimbus", "version" : 1 }
 }
