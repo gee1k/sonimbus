@@ -2,6 +2,7 @@ import SwiftUI
 import UIKit
 
 private enum NowPlayingFocus: Hashable {
+    case emptyReturn
     case immersive
     case fmDislike
     case info
@@ -123,8 +124,8 @@ struct NowPlayingView: View {
                 }
                 markInteraction()
             } else if newID == nil {
-                focusedControl = nil
                 focusedQueueID = nil
+                requestEmptyPlayerFocus()
             }
         }
         .onChange(of: focusedControl) { _, focus in
@@ -205,7 +206,7 @@ struct NowPlayingView: View {
     }
 
     private var emptyPlayer: some View {
-        VStack(spacing: 30) {
+        ZStack {
             if player.isLoadingPersonalFM {
                 VStack(spacing: 22) {
                     ProgressView()
@@ -230,9 +231,18 @@ struct NowPlayingView: View {
                     symbol: "music.note"
                 )
             }
+
+            VStack {
+                Spacer()
+                Button("返回", action: onDismiss)
+                    .buttonStyle(TVPillButtonStyle())
+                    .focused($focusedControl, equals: .emptyReturn)
+                    .prefersDefaultFocus(true, in: focusScope)
+                    .accessibilityHint("返回之前的标签页")
+            }
+            .padding(.bottom, 34)
         }
         .padding(76)
-        .allowsHitTesting(false)
     }
 
     private var header: some View {
@@ -860,7 +870,7 @@ struct NowPlayingView: View {
     }
 
     private var initialControlFocus: NowPlayingFocus {
-        guard player.currentTrack != nil else { return .immersive }
+        guard player.currentTrack != nil else { return .emptyReturn }
         return .play
     }
 
@@ -891,7 +901,10 @@ struct NowPlayingView: View {
             closeInfoPanel()
             return
         }
-        if interaction.handleBack(allowsLyricsNavigation: hasNavigableLyrics) == .handled {
+        if interaction.handleBack(
+            hasCurrentTrack: player.currentTrack != nil,
+            allowsLyricsNavigation: hasNavigableLyrics
+        ) == .handled {
             if interaction.panel == .queue {
                 requestQueueFocus()
             } else if interaction.showsControls {
@@ -959,7 +972,10 @@ struct NowPlayingView: View {
         focusedControl = nil
         await Task.yield()
         guard !Task.isCancelled, isActive else { return }
-        guard player.currentTrack != nil else { return }
+        guard player.currentTrack != nil else {
+            requestEmptyPlayerFocus()
+            return
+        }
         focusedControl = .play
         resetFocus(in: focusScope)
         markInteraction()
@@ -1007,6 +1023,15 @@ struct NowPlayingView: View {
 
     private func markInteraction() {
         idleGeneration &+= 1
+    }
+
+    private func requestEmptyPlayerFocus() {
+        Task { @MainActor in
+            await Task.yield()
+            guard isActive, player.currentTrack == nil else { return }
+            focusedControl = .emptyReturn
+            resetFocus(in: focusScope)
+        }
     }
 
     private func closeInfoPanel() {

@@ -94,7 +94,11 @@ struct NowPlayingInteractionState: Equatable {
         selectedLyricIndex = nil
     }
 
-    mutating func handleBack(allowsLyricsNavigation: Bool = true) -> NowPlayingBackAction {
+    mutating func handleBack(
+        hasCurrentTrack: Bool = true,
+        allowsLyricsNavigation: Bool = true
+    ) -> NowPlayingBackAction {
+        guard hasCurrentTrack else { return .deferToSystem }
         if panel == .queue {
             panel = panelBeforeQueue
             showControls()

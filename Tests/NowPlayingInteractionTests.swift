@@ -89,3 +89,10 @@ import Testing
     #expect(state.chromeMode == .ambient)
     #expect(state.handleBack(allowsLyricsNavigation: false) == .deferToSystem)
 }
+
+@Test func emptyPlayerBackImmediatelyReturnsToThePresentingTab() {
+    var state = NowPlayingInteractionState()
+
+    #expect(state.handleBack(hasCurrentTrack: false) == .deferToSystem)
+    #expect(state.chromeMode == .controls)
+}
