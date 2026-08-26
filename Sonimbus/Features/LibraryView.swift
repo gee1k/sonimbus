@@ -189,13 +189,16 @@ struct LibraryView: View {
                 }
                 .padding(.top, 42)
                 .padding(.bottom, 80)
+                .id(RootContentAnchor.top)
             }
             .background(TVBackground(tint: .indigo))
             .task(id: focusRestorationGeneration) {
                 await restoreNavigationFocus(using: proxy)
             }
+            .onChange(of: rootTabActivationGeneration) { _, generation in
+                Task { await resetRootPresentation(for: generation, using: proxy) }
+            }
         }
-        .id(rootTabActivationGeneration)
     }
 
     private var profileHeader: some View {
@@ -270,6 +273,22 @@ struct LibraryView: View {
         guard !Task.isCancelled else { return }
         lastFocusedRoute = route
         focusedRoute = route
+    }
+
+    @MainActor
+    private func resetRootPresentation(
+        for generation: Int,
+        using proxy: ScrollViewProxy
+    ) async {
+        guard generation > 0 else { return }
+        await Task.yield()
+        guard !Task.isCancelled,
+              generation == rootTabActivationGeneration else { return }
+        var transaction = Transaction()
+        transaction.disablesAnimations = true
+        withTransaction(transaction) {
+            proxy.scrollTo(RootContentAnchor.top, anchor: .top)
+        }
     }
 
     private var loggedOutView: some View {

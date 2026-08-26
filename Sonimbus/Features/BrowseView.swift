@@ -184,13 +184,16 @@ struct BrowseView: View {
                 }
                 .padding(.top, 44)
                 .padding(.bottom, 70)
+                .id(RootContentAnchor.top)
             }
             .background(TVBackground(tint: .blue))
             .task(id: focusRestorationGeneration) {
                 await restoreNavigationFocus(using: proxy)
             }
+            .onChange(of: rootTabActivationGeneration) { _, generation in
+                Task { await resetRootPresentation(for: generation, using: proxy) }
+            }
         }
-        .id(rootTabActivationGeneration)
         .task(id: "\(category)-\(order)") { await load() }
         .onChange(of: focusedRoute) { _, route in
             if let route { lastFocusedRoute = route }
@@ -218,6 +221,22 @@ struct BrowseView: View {
         guard !Task.isCancelled else { return }
         lastFocusedRoute = route
         focusedRoute = route
+    }
+
+    @MainActor
+    private func resetRootPresentation(
+        for generation: Int,
+        using proxy: ScrollViewProxy
+    ) async {
+        guard generation > 0 else { return }
+        await Task.yield()
+        guard !Task.isCancelled,
+              generation == rootTabActivationGeneration else { return }
+        var transaction = Transaction()
+        transaction.disablesAnimations = true
+        withTransaction(transaction) {
+            proxy.scrollTo(RootContentAnchor.top, anchor: .top)
+        }
     }
 
     private func section(for route: AppRoute) -> Section {

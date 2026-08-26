@@ -87,7 +87,6 @@ struct SearchView: View {
                 }
             }
         }
-        .id(rootTabActivationGeneration)
         .background(TVBackground(tint: TVTheme.magenta))
         .onAppear {
             loadRecentQueries()
@@ -153,9 +152,13 @@ struct SearchView: View {
                         }
                         .padding(.horizontal, TVTheme.horizontalPadding)
                         .padding(.bottom, 70)
+                        .id(RootContentAnchor.top)
                     }
                     .task(id: pendingResultFocusID) {
                         await focusPendingResult(using: proxy)
+                    }
+                    .onChange(of: rootTabActivationGeneration) { _, generation in
+                        Task { await resetResultPresentation(for: generation, using: proxy) }
                     }
                 }
             }
@@ -224,9 +227,13 @@ struct SearchView: View {
                         }
                         .padding(.horizontal, TVTheme.horizontalPadding)
                         .padding(.bottom, 70)
+                        .id(RootContentAnchor.top)
                     }
                     .task(id: pendingResultFocusID) {
                         await focusPendingResult(using: proxy)
+                    }
+                    .onChange(of: rootTabActivationGeneration) { _, generation in
+                        Task { await resetResultPresentation(for: generation, using: proxy) }
                     }
                 }
             }
@@ -344,6 +351,22 @@ struct SearchView: View {
         focusedResultID = nil
         lastFocusedResultID = id
         pendingResultFocusID = id
+    }
+
+    @MainActor
+    private func resetResultPresentation(
+        for generation: Int,
+        using proxy: ScrollViewProxy
+    ) async {
+        guard generation > 0 else { return }
+        await Task.yield()
+        guard !Task.isCancelled,
+              generation == rootTabActivationGeneration else { return }
+        var transaction = Transaction()
+        transaction.disablesAnimations = true
+        withTransaction(transaction) {
+            proxy.scrollTo(RootContentAnchor.top, anchor: .top)
+        }
     }
 
     @MainActor

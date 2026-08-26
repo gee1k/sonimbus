@@ -85,6 +85,10 @@ private struct TrackFocusRestorationState {
     var trackID: AnyHashable?
 }
 
+enum RootContentAnchor: Hashable {
+    case top
+}
+
 struct AppShellView: View {
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -195,6 +199,7 @@ struct AppShellView: View {
                     stopMVIfNeeded(in: contentTab)
                     lastContentTab = contentTab
                     presentNowPlaying(from: .tabBar)
+                    selectedTab = .nowPlaying
                     return
                 }
 
@@ -252,8 +257,9 @@ struct AppShellView: View {
     }
 
     private func dismissNowPlaying() {
-        guard let source = nowPlayingPresentation.dismiss() else { return }
+        guard let source = nowPlayingPresentation.source else { return }
         if source == .contextual {
+            _ = nowPlayingPresentation.dismiss()
             let destination = selectedTab
             let focusID = contextualReturnFocusID
             contextualReturnFocusID = nil
@@ -263,6 +269,8 @@ struct AppShellView: View {
             }
         } else {
             let destination = lastContentTab
+            selectedTab = destination
+            _ = nowPlayingPresentation.dismiss()
             Task { @MainActor in
                 await Task.yield()
                 guard !nowPlayingPresentation.isPresented,
