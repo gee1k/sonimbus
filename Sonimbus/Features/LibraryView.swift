@@ -457,15 +457,22 @@ private struct LibraryShortcutCard: View {
 }
 
 struct RecentPlaysView: View {
+    private enum HeaderFocus: Hashable {
+        case range
+        case playAll
+    }
+
     @Environment(\.openNowPlaying) private var openNowPlaying
     @Environment(AccountStore.self) private var account
     @Environment(PlayerService.self) private var player
     @Environment(ContentStore.self) private var contentStore
+    @Namespace private var focusScope
 
     @State private var weekOnly = true
     @State private var isLoading = true
     @State private var errorMessage: String?
     @State private var loadGeneration = 0
+    @FocusState private var focusedHeaderAction: HeaderFocus?
     @FocusState private var focusedTrackID: AnyHashable?
 
     private var contentKey: ContentStore.PlayRecordsKey? {
@@ -485,6 +492,11 @@ struct RecentPlaysView: View {
         return records.filter { visibleIDs.contains($0.song.id) }
     }
 
+    private var initialHeaderFocus: HeaderFocus? {
+        if isLoading && cachedRecords == nil { return nil }
+        return visibleRecords.isEmpty ? .range : .playAll
+    }
+
     var body: some View {
         VStack(spacing: 26) {
             HStack(spacing: 24) {
@@ -502,6 +514,8 @@ struct RecentPlaysView: View {
                 }
                 .pickerStyle(.segmented)
                 .frame(width: 420)
+                .focused($focusedHeaderAction, equals: .range)
+                .prefersDefaultFocus(initialHeaderFocus == .range, in: focusScope)
                 Button {
                     player.play(visibleRecords.map(\.song), source: .recent)
                     openNowPlaying?(nil)
@@ -510,6 +524,8 @@ struct RecentPlaysView: View {
                 }
                 .buttonStyle(TVPillButtonStyle(prominent: true))
                 .disabled(visibleRecords.isEmpty)
+                .focused($focusedHeaderAction, equals: .playAll)
+                .prefersDefaultFocus(initialHeaderFocus == .playAll, in: focusScope)
 
             }
             .padding(.horizontal, TVTheme.horizontalPadding)
@@ -519,6 +535,11 @@ struct RecentPlaysView: View {
             content
         }
         .background(TVBackground(tint: .indigo))
+        .tvInitialFocus(
+            $focusedHeaderAction,
+            target: initialHeaderFocus,
+            in: focusScope
+        )
         .task(id: weekOnly) { await load() }
     }
 
@@ -591,10 +612,15 @@ struct RecentPlaysView: View {
 }
 
 struct CloudMusicView: View {
+    private enum HeaderFocus: Hashable {
+        case upload
+    }
+
     @Environment(\.openNowPlaying) private var openNowPlaying
     @Environment(AccountStore.self) private var account
     @Environment(PlayerService.self) private var player
     @Environment(ContentStore.self) private var contentStore
+    @Namespace private var focusScope
 
     @State private var isLoading = true
     @State private var errorMessage: String?
@@ -603,6 +629,7 @@ struct CloudMusicView: View {
     @State private var matchingItem: CloudSongItem?
     @State private var itemPendingDeletion: CloudSongItem?
     @State private var isDeleting = false
+    @FocusState private var focusedHeaderAction: HeaderFocus?
     @FocusState private var focusedTrackID: AnyHashable?
 
     private var contentKey: Int? { account.profile?.userId }
@@ -630,6 +657,8 @@ struct CloudMusicView: View {
                     Label("上传音乐", systemImage: "icloud.and.arrow.up")
                 }
                 .buttonStyle(TVPillButtonStyle())
+                .focused($focusedHeaderAction, equals: .upload)
+                .prefersDefaultFocus(true, in: focusScope)
                 Button {
                     player.play(tracks, source: .cloud)
                     openNowPlaying?(nil)
@@ -647,6 +676,7 @@ struct CloudMusicView: View {
             content
         }
         .background(TVBackground(tint: TVTheme.magenta))
+        .tvInitialFocus($focusedHeaderAction, target: .upload, in: focusScope)
         .task { await load() }
         .fullScreenCover(isPresented: $showUpload) {
             CloudUploadView {
@@ -772,7 +802,13 @@ struct CloudMusicView: View {
 }
 
 struct PlaybackSettingsView: View {
+    private enum InitialFocus: Hashable {
+        case quality
+    }
+
     @Environment(PlayerService.self) private var player
+    @Namespace private var focusScope
+    @FocusState private var focusedInitialControl: InitialFocus?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 44) {
@@ -803,6 +839,8 @@ struct PlaybackSettingsView: View {
                 }
                 .pickerStyle(.segmented)
                 .labelsHidden()
+                .focused($focusedInitialControl, equals: .quality)
+                .prefersDefaultFocus(true, in: focusScope)
             }
 
             PlaybackSettingsToggle(
@@ -828,6 +866,7 @@ struct PlaybackSettingsView: View {
         .padding(.horizontal, 150)
         .padding(.top, 90)
         .background(TVBackground(tint: .purple))
+        .tvInitialFocus($focusedInitialControl, target: .quality, in: focusScope)
     }
 }
 

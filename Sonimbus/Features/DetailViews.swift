@@ -622,6 +622,10 @@ final class MVPlaybackController {
 }
 
 struct MVDetailView: View {
+    private enum InitialFocus: Hashable {
+        case videoStage
+    }
+
     let mvID: Int
 
     @Environment(\.dismiss) private var dismiss
@@ -629,11 +633,13 @@ struct MVDetailView: View {
     @Environment(\.scenePhase) private var scenePhase
     @Environment(PlayerService.self) private var audioPlayer
     @Environment(ContentStore.self) private var content
+    @Namespace private var focusScope
     private let mvPlayback = MVPlaybackController.shared
     @State private var isLoading = true
     @State private var errorMessage: String?
     @State private var loadGeneration = 0
     @State private var showsFullscreenPlayer = false
+    @FocusState private var focusedInitialControl: InitialFocus?
 
     private var videoPlayer: AVPlayer? {
         mvPlayback.player
@@ -667,6 +673,11 @@ struct MVDetailView: View {
             }
         }
         .background(TVBackground(tint: TVTheme.magenta))
+        .tvInitialFocus(
+            $focusedInitialControl,
+            target: displayedDetail == nil ? nil : .videoStage,
+            in: focusScope
+        )
         .task(id: mvID) { await load() }
         .onAppear { mvPlayback.activate(mvID: mvID) }
         .modifier(
@@ -740,6 +751,8 @@ struct MVDetailView: View {
             .clipShape(RoundedRectangle(cornerRadius: 28, style: .continuous))
         }
         .buttonStyle(MVVideoStageButtonStyle())
+        .focused($focusedInitialControl, equals: .videoStage)
+        .prefersDefaultFocus(true, in: focusScope)
         .accessibilityLabel(videoPlayer == nil ? "播放 \(detail.name) 并进入全屏" : "全屏播放 \(detail.name)")
     }
 
@@ -1163,9 +1176,14 @@ private struct InlineMVPlayer: UIViewRepresentable {
 }
 
 private struct TrackCollectionView: View {
+    private enum HeaderFocus: Hashable {
+        case play
+    }
+
     @Environment(\.openNowPlaying) private var openNowPlaying
     @Environment(\.navigationFocusRestorationGeneration) private var focusRestorationGeneration
     @Environment(\.navigationFocusRestorationRoute) private var focusRestorationRoute
+    @Namespace private var focusScope
     let title: String
     let subtitle: String?
     let description: String?
@@ -1187,6 +1205,7 @@ private struct TrackCollectionView: View {
     @Environment(PlayerService.self) private var player
     @Environment(AccountStore.self) private var account
     @State private var lastFocusedRoute: AppRoute?
+    @FocusState private var focusedHeaderAction: HeaderFocus?
     @FocusState private var focusedRoute: AppRoute?
     @FocusState private var focusedTrackID: AnyHashable?
 
@@ -1238,6 +1257,8 @@ private struct TrackCollectionView: View {
                             }
                             .buttonStyle(TVPillButtonStyle(prominent: true))
                             .disabled(visibleTracks.isEmpty)
+                            .focused($focusedHeaderAction, equals: .play)
+                            .prefersDefaultFocus(true, in: focusScope)
 
                             Button {
                                 player.playShuffled(visibleTracks, source: source)
@@ -1347,6 +1368,11 @@ private struct TrackCollectionView: View {
                 }
             }
         }
+        .tvInitialFocus(
+            $focusedHeaderAction,
+            target: visibleTracks.isEmpty ? nil : .play,
+            in: focusScope
+        )
         .onChange(of: focusedRoute) { _, route in
             if let route { lastFocusedRoute = route }
         }

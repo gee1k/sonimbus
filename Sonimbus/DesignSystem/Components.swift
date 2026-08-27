@@ -591,6 +591,38 @@ private struct OptionalTrackFocus: ViewModifier {
     }
 }
 
+private struct TVInitialFocusModifier<Value: Hashable>: ViewModifier {
+    @Environment(\.resetFocus) private var resetFocus
+    @State private var hasRequestedInitialFocus = false
+
+    let binding: FocusState<Value?>.Binding
+    let target: Value?
+    let scope: Namespace.ID
+
+    func body(content: Content) -> some View {
+        content
+            .focusScope(scope)
+            .task(id: target) {
+                guard !hasRequestedInitialFocus, let target else { return }
+                await Task.yield()
+                guard !Task.isCancelled else { return }
+                hasRequestedInitialFocus = true
+                binding.wrappedValue = target
+                resetFocus(in: scope)
+            }
+    }
+}
+
+extension View {
+    func tvInitialFocus<Value: Hashable>(
+        _ binding: FocusState<Value?>.Binding,
+        target: Value?,
+        in scope: Namespace.ID
+    ) -> some View {
+        modifier(TVInitialFocusModifier(binding: binding, target: target, scope: scope))
+    }
+}
+
 struct TrackRowButtonStyle: ButtonStyle {
     @Environment(\.isFocused) private var isFocused
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
