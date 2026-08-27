@@ -1270,6 +1270,7 @@ private struct NowPlayingSyncedLyrics: View {
                         lyricRow(
                             line,
                             selected: index == selectedIndex,
+                            emphasized: index == emphasizedIndex,
                             primaryOpacity: opacity
                         )
                         .id(index)
@@ -1308,6 +1309,7 @@ private struct NowPlayingSyncedLyrics: View {
     private func lyricRow(
         _ line: LyricLine,
         selected: Bool,
+        emphasized: Bool,
         primaryOpacity: Double
     ) -> some View {
         VStack(alignment: .leading, spacing: lyricSupplementalSpacing) {
@@ -1337,6 +1339,7 @@ private struct NowPlayingSyncedLyrics: View {
         .padding(.horizontal, lyricHorizontalPadding)
         .frame(maxWidth: .infinity, alignment: .leading)
         .foregroundStyle(Color.white.opacity(primaryOpacity))
+        .scaleEffect(emphasized ? 1 : inactiveLyricScale, anchor: .leading)
         .overlay(alignment: .topTrailing) {
             if selected {
                 Text(DisplayFormatter.duration(line.time))
@@ -1350,6 +1353,7 @@ private struct NowPlayingSyncedLyrics: View {
             }
         }
         .animation(reduceMotion ? nil : .smooth(duration: 0.46), value: primaryOpacity)
+        .animation(reduceMotion ? nil : .smooth(duration: 0.56), value: emphasized)
         .accessibilityLabel(line.text.isEmpty ? "音乐间奏" : line.text)
         .accessibilityValue(DisplayFormatter.duration(line.time))
     }
@@ -1375,6 +1379,7 @@ private struct NowPlayingSyncedLyrics: View {
     private var lyricHorizontalPadding: CGFloat { 14 }
     private var lyricSelectionBadgeClearance: CGFloat { 92 }
     private var lyricSupplementalSpacing: CGFloat { 10 }
+    private var inactiveLyricScale: CGFloat { 0.88 }
 
     private func scroll(to index: Int, using proxy: ScrollViewProxy, animated: Bool) {
         guard lines.indices.contains(index) else { return }
@@ -1395,10 +1400,10 @@ private struct NowPlayingSyncedLyrics: View {
     private func primaryOpacity(for distance: Int) -> Double {
         switch abs(distance) {
         case 0: 1
-        case 1: 0.38
-        case 2: 0.27
-        case 3: 0.19
-        default: 0.13
+        case 1: 0.32
+        case 2: 0.22
+        case 3: 0.15
+        default: 0.10
         }
     }
 
