@@ -1,5 +1,6 @@
 import Foundation
 import os.log
+import Security
 
 enum NeteaseAPIError: LocalizedError {
     case invalidResponse
@@ -21,6 +22,68 @@ enum NeteaseAPIError: LocalizedError {
         case .decoding:
             return "数据格式暂时无法识别"
         }
+    }
+}
+
+enum AuthenticationCookieArchive {
+    static func encode(_ cookies: [String: String]) -> Data? {
+        try? JSONEncoder().encode(cookies)
+    }
+
+    static func decode(_ data: Data) -> [String: String]? {
+        try? JSONDecoder().decode([String: String].self, from: data)
+    }
+}
+
+private enum AuthenticationCookieKeychain {
+    private static let log = Logger(
+        subsystem: "com.svend.sonimbus",
+        category: "CredentialStorage"
+    )
+    private static let service = "com.svend.sonimbus.netease-authentication"
+    private static let account = "cookies"
+
+    private static var query: [String: Any] {
+        [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: account,
+        ]
+    }
+
+    static func read() -> Data? {
+        var readQuery = query
+        readQuery[kSecReturnData as String] = true
+        readQuery[kSecMatchLimit as String] = kSecMatchLimitOne
+        var result: CFTypeRef?
+        guard SecItemCopyMatching(readQuery as CFDictionary, &result) == errSecSuccess else {
+            return nil
+        }
+        return result as? Data
+    }
+
+    @discardableResult
+    static func write(_ data: Data) -> Bool {
+        let attributes = [kSecValueData as String: data]
+        let updateStatus = SecItemUpdate(query as CFDictionary, attributes as CFDictionary)
+        if updateStatus == errSecSuccess { return true }
+        guard updateStatus == errSecItemNotFound else {
+            log.error("Keychain update failed with status \(updateStatus)")
+            return false
+        }
+
+        var item = query
+        item[kSecValueData as String] = data
+        item[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
+        let addStatus = SecItemAdd(item as CFDictionary, nil)
+        if addStatus != errSecSuccess {
+            log.error("Keychain add failed with status \(addStatus)")
+        }
+        return addStatus == errSecSuccess
+    }
+
+    static func remove() {
+        SecItemDelete(query as CFDictionary)
     }
 }
 
@@ -48,14 +111,21 @@ final class NeteaseClient: @unchecked Sendable {
         configuration.requestCachePolicy = .reloadRevalidatingCacheData
         session = URLSession(configuration: configuration)
 
-        let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+        let applicationSupport = FileManager.default.urls(
+            for: .applicationSupportDirectory,
+            in: .userDomainMask
+        )[0]
+        let support = applicationSupport
             .appendingPathComponent("Sonimbus", isDirectory: true)
         try? FileManager.default.createDirectory(at: support, withIntermediateDirectories: true)
         cookieFileURL = support.appendingPathComponent("cookies.json")
-        if let data = try? Data(contentsOf: cookieFileURL),
-           let saved = try? JSONDecoder().decode([String: String].self, from: data) {
-            cookies = saved
-        }
+
+        let keychainCookies = AuthenticationCookieKeychain.read()
+            .flatMap(AuthenticationCookieArchive.decode)
+        let fileCookies = (try? Data(contentsOf: cookieFileURL))
+            .flatMap(AuthenticationCookieArchive.decode)
+        cookies = keychainCookies ?? fileCookies ?? [:]
+        if !cookies.isEmpty { persistCurrentCookies() }
     }
 
     var isLoggedIn: Bool { cookie(named: "MUSIC_U") != nil }
@@ -68,14 +138,17 @@ final class NeteaseClient: @unchecked Sendable {
 
     func setCookies(_ values: [String: String]) {
         cookieLock.lock()
+        var didChange = false
         if let musicU = values["MUSIC_U"], !musicU.isEmpty, musicU != cookies["MUSIC_U"] {
             cookieGeneration &+= 1
         }
-        for (key, value) in values where !value.isEmpty && value != "\"\"" {
+        for (key, value) in values
+        where !value.isEmpty && value != "\"\"" && value != cookies[key] {
             cookies[key] = value
+            didChange = true
         }
         cookieLock.unlock()
-        persistCurrentCookies()
+        if didChange { persistCurrentCookies() }
     }
 
     func clearAuthentication() {
@@ -224,14 +297,17 @@ final class NeteaseClient: @unchecked Sendable {
             cookieLock.unlock()
             return
         }
+        var didChange = false
         if let musicU = values["MUSIC_U"], !musicU.isEmpty, musicU != cookies["MUSIC_U"] {
             cookieGeneration &+= 1
         }
-        for (key, value) in values where !value.isEmpty && value != "\"\"" {
+        for (key, value) in values
+        where !value.isEmpty && value != "\"\"" && value != cookies[key] {
             cookies[key] = value
+            didChange = true
         }
         cookieLock.unlock()
-        persistCurrentCookies()
+        if didChange { persistCurrentCookies() }
     }
 
     static func cookieValues(from parsed: [HTTPCookie]) -> [String: String] {
@@ -246,7 +322,17 @@ final class NeteaseClient: @unchecked Sendable {
         cookieLock.lock()
         let snapshot = cookies
         cookieLock.unlock()
-        if let data = try? JSONEncoder().encode(snapshot) {
+
+        if snapshot.isEmpty {
+            AuthenticationCookieKeychain.remove()
+            try? FileManager.default.removeItem(at: cookieFileURL)
+            return
+        }
+
+        guard let data = AuthenticationCookieArchive.encode(snapshot) else { return }
+        if AuthenticationCookieKeychain.write(data) {
+            try? FileManager.default.removeItem(at: cookieFileURL)
+        } else {
             try? data.write(to: cookieFileURL, options: .atomic)
         }
     }

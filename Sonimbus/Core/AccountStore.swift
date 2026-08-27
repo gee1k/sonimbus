@@ -63,9 +63,7 @@ final class AccountStore {
         do {
             guard let fetchedProfile = try await NeteaseAPI.account() else {
                 guard bootstrapGeneration == accountGeneration else { return false }
-                NeteaseClient.shared.clearAuthentication()
-                clearAccountData()
-                bootstrapError = nil
+                bootstrapError = "账号资料暂时没有返回，登录凭证仍已保留，请稍后重试"
                 return false
             }
             guard bootstrapGeneration == accountGeneration, hasAuthenticationCookie else { return false }

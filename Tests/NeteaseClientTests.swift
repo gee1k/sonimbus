@@ -37,3 +37,17 @@ func duplicateResponseCookiesDoNotCrash() throws {
     #expect(values["__csrf"] == "csrf-token")
     #expect(values.count == 2)
 }
+
+@Test("登录 Cookie 可以完整归档并恢复")
+func authenticationCookiesRoundTrip() throws {
+    let cookies = [
+        "MUSIC_U": "music-token",
+        "__csrf": "csrf-token",
+        "NMTID": "device-token",
+    ]
+
+    let data = try #require(AuthenticationCookieArchive.encode(cookies))
+
+    #expect(AuthenticationCookieArchive.decode(data) == cookies)
+    #expect(AuthenticationCookieArchive.decode(Data("invalid".utf8)) == nil)
+}
