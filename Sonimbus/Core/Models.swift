@@ -71,6 +71,12 @@ enum PlaybackQueuePolicy {
     }
 }
 
+enum PlaybackIdlePolicy {
+    static func shouldDisableTimer(isPlaying: Bool, isPreparingPlayback: Bool) -> Bool {
+        isPlaying || isPreparingPlayback
+    }
+}
+
 enum SongUnlockPolicy {
     static func visibleTracks(_ tracks: [Track], isEnabled: Bool) -> [Track] {
         guard !isEnabled else { return tracks }

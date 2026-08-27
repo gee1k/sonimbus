@@ -209,6 +209,13 @@ func resolvesNextQueueIndex() {
     #expect(PlaybackQueuePolicy.nextIndex(after: 0, count: 0, repeatMode: .all) == nil)
 }
 
+@Test("音频播放和准备期间保持设备唤醒")
+func resolvesPlaybackIdleTimerPolicy() {
+    #expect(!PlaybackIdlePolicy.shouldDisableTimer(isPlaying: false, isPreparingPlayback: false))
+    #expect(PlaybackIdlePolicy.shouldDisableTimer(isPlaying: true, isPreparingPlayback: false))
+    #expect(PlaybackIdlePolicy.shouldDisableTimer(isPlaying: false, isPreparingPlayback: true))
+}
+
 @Test("播放队列按歌曲 ID 保留首次出现顺序")
 func deduplicatesPlaybackQueue() {
     let album = AlbumRef(id: 1, name: "专辑", picUrl: nil)

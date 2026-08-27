@@ -41,9 +41,21 @@ final class PlayerService {
     private(set) var currentTrack: Track?
     private(set) var currentIndex = -1
     private(set) var source: PlaySource = .none
-    private(set) var isPlaying = false
-    private(set) var isBuffering = false
-    private(set) var isLoadingPersonalFM = false
+    private(set) var isPlaying = false {
+        didSet {
+            updateIdleTimer()
+            updateRemoteCommandAvailability()
+        }
+    }
+    private(set) var isBuffering = false {
+        didSet { updateRemoteCommandAvailability() }
+    }
+    private(set) var isLoadingPersonalFM = false {
+        didSet {
+            updateIdleTimer()
+            updateRemoteCommandAvailability()
+        }
+    }
     private(set) var duration: TimeInterval = 0
     private(set) var lyrics: ParsedLyrics?
     private(set) var isLoadingLyrics = false
@@ -93,11 +105,25 @@ final class PlayerService {
     private var scrobbled = false
     private var consecutiveFailures = 0
     private var wasPlayingBeforeInterruption = false
-    private var isResolvingURL = false
+    private var isResolvingURL = false {
+        didSet {
+            updateIdleTimer()
+            updateRemoteCommandAvailability()
+        }
+    }
     private var didReachEnd = false
     private var attemptedAlternativeSources = Set<String>()
 
     private var activeQueue: [Track] { shuffleEnabled ? shuffledQueue : queue }
+
+    private func updateIdleTimer() {
+        let shouldDisableTimer = PlaybackIdlePolicy.shouldDisableTimer(
+            isPlaying: isPlaying,
+            isPreparingPlayback: isResolvingURL || isLoadingPersonalFM
+        )
+        guard UIApplication.shared.isIdleTimerDisabled != shouldDisableTimer else { return }
+        UIApplication.shared.isIdleTimerDisabled = shouldDisableTimer
+    }
 
     private init() {
         engine.actionAtItemEnd = .pause
@@ -220,6 +246,7 @@ final class PlayerService {
             currentIndex = index
         }
         persistState()
+        updateNowPlayingQueueContext()
         ToastCenter.shared.show("《\(track.name)》将在下一首播放")
     }
 
@@ -239,6 +266,7 @@ final class PlayerService {
         queue.append(track)
         if shuffleEnabled { shuffledQueue.append(track) }
         persistState()
+        updateNowPlayingQueueContext()
         ToastCenter.shared.show("《\(track.name)》已添加到队列末尾")
     }
 
@@ -253,6 +281,7 @@ final class PlayerService {
         guard queue.count != previousCount else { return }
         currentIndex = activeQueue.firstIndex(where: { $0.id == currentTrack.id }) ?? 0
         persistState()
+        updateNowPlayingQueueContext()
         ToastCenter.shared.show("已从播放队列移除《\(track.name)》")
     }
 
@@ -299,6 +328,7 @@ final class PlayerService {
         scrobbled = false
         consecutiveFailures = 0
         MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
+        updateRemoteCommandAvailability()
         persistState()
     }
 
@@ -498,13 +528,12 @@ final class PlayerService {
             currentIndex = queue.firstIndex(where: { $0.id == track.id }) ?? 0
         }
         persistState()
+        updateNowPlayingQueueContext()
     }
 
     func cycleRepeat() {
         guard source != .personalFM else { return }
-        repeatMode = repeatMode.next
-        UserDefaults.standard.set(repeatMode.rawValue, forKey: "player.repeat")
-        persistState()
+        setRepeatMode(repeatMode.next)
     }
 
     func setPreferredQuality(_ quality: AudioQuality) {
@@ -538,6 +567,7 @@ final class PlayerService {
     }
 
     private func pruneUnavailableTracksFromQueue() {
+        defer { updateNowPlayingQueueContext() }
         let currentID = currentTrack?.id
         let shouldKeep: (Track) -> Bool = { track in
             track.id == currentID || !track.isPlaybackUnavailable
@@ -930,6 +960,38 @@ final class PlayerService {
             Task { @MainActor in self?.seek(to: positionEvent.positionTime) }
             return .success
         }
+        commands.changeShuffleModeCommand.addTarget { [weak self] event in
+            guard let shuffleEvent = event as? MPChangeShuffleModeCommandEvent else {
+                return .commandFailed
+            }
+            guard shuffleEvent.shuffleType == .off || shuffleEvent.shuffleType == .items else {
+                return .commandFailed
+            }
+            Task { @MainActor in
+                guard let self, self.source != .personalFM else { return }
+                let shouldShuffle = shuffleEvent.shuffleType == .items
+                if self.shuffleEnabled != shouldShuffle { self.toggleShuffle() }
+            }
+            return .success
+        }
+        commands.changeRepeatModeCommand.addTarget { [weak self] event in
+            guard let repeatEvent = event as? MPChangeRepeatModeCommandEvent else {
+                return .commandFailed
+            }
+            let mode: RepeatMode
+            switch repeatEvent.repeatType {
+            case .off: mode = .off
+            case .one: mode = .one
+            case .all: mode = .all
+            @unknown default: return .commandFailed
+            }
+            Task { @MainActor in
+                guard let self, self.source != .personalFM else { return }
+                self.setRepeatMode(mode)
+            }
+            return .success
+        }
+        updateRemoteCommandAvailability()
     }
 
     private func updateNowPlayingMetadata() {
@@ -937,16 +999,27 @@ final class PlayerService {
             MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
             return
         }
-        let info: [String: Any] = [
+        let queueContext = nowPlayingQueueContext(for: track)
+        var info: [String: Any] = [
             MPMediaItemPropertyTitle: track.name,
             MPMediaItemPropertyArtist: track.artistNames,
             MPMediaItemPropertyAlbumTitle: track.album.name,
+            MPMediaItemPropertyPersistentID: NSNumber(value: UInt64(max(track.id, 0))),
             MPMediaItemPropertyPlaybackDuration: duration,
             MPNowPlayingInfoPropertyElapsedPlaybackTime: progress,
             MPNowPlayingInfoPropertyPlaybackRate: isPlaying ? 1.0 : 0.0,
+            MPNowPlayingInfoPropertyDefaultPlaybackRate: 1.0,
             MPNowPlayingInfoPropertyMediaType: MPNowPlayingInfoMediaType.audio.rawValue,
+            MPNowPlayingInfoPropertyPlaybackQueueIndex: queueContext.index,
+            MPNowPlayingInfoPropertyPlaybackQueueCount: queueContext.count,
+            MPNowPlayingInfoPropertyExternalContentIdentifier: "netease:song:\(track.id)",
+            MPNowPlayingInfoPropertyServiceIdentifier: "com.svend.sonimbus",
         ]
+        if let collectionIdentifier = nowPlayingCollectionIdentifier {
+            info[MPNowPlayingInfoCollectionIdentifier] = collectionIdentifier
+        }
         MPNowPlayingInfoCenter.default().nowPlayingInfo = info
+        updateRemoteCommandAvailability()
 
         guard let url = track.artworkURL else { return }
         Task.detached {
@@ -971,6 +1044,79 @@ final class PlayerService {
         info[MPNowPlayingInfoPropertyElapsedPlaybackTime] = progress
         info[MPNowPlayingInfoPropertyPlaybackRate] = isPlaying ? 1.0 : 0.0
         MPNowPlayingInfoCenter.default().nowPlayingInfo = info
+    }
+
+    private func updateNowPlayingQueueContext() {
+        guard let track = currentTrack else {
+            updateRemoteCommandAvailability()
+            return
+        }
+        var info = MPNowPlayingInfoCenter.default().nowPlayingInfo ?? [:]
+        let queueContext = nowPlayingQueueContext(for: track)
+        info[MPNowPlayingInfoPropertyPlaybackQueueIndex] = queueContext.index
+        info[MPNowPlayingInfoPropertyPlaybackQueueCount] = queueContext.count
+        if let collectionIdentifier = nowPlayingCollectionIdentifier {
+            info[MPNowPlayingInfoCollectionIdentifier] = collectionIdentifier
+        } else {
+            info.removeValue(forKey: MPNowPlayingInfoCollectionIdentifier)
+        }
+        MPNowPlayingInfoCenter.default().nowPlayingInfo = info
+        updateRemoteCommandAvailability()
+    }
+
+    private func nowPlayingQueueContext(for track: Track) -> (index: Int, count: Int) {
+        let systemQueue = playbackQueue
+        let index = systemQueue.firstIndex(where: { $0.id == track.id }) ?? 0
+        return (index, max(systemQueue.count, 1))
+    }
+
+    private var nowPlayingCollectionIdentifier: String? {
+        switch source {
+        case .playlist(let id): "netease:playlist:\(id)"
+        case .intelligence(let id): "netease:intelligence:\(id)"
+        case .album(let id): "netease:album:\(id)"
+        case .artist(let id): "netease:artist:\(id)"
+        case .daily: "netease:daily"
+        case .newSongs: "netease:new-songs"
+        case .recent: "netease:recent"
+        case .cloud: "netease:cloud"
+        case .search: "netease:search"
+        case .personalFM: "netease:personal-fm"
+        case .none: nil
+        }
+    }
+
+    private func setRepeatMode(_ mode: RepeatMode) {
+        guard repeatMode != mode else {
+            updateRemoteCommandAvailability()
+            return
+        }
+        repeatMode = mode
+        UserDefaults.standard.set(mode.rawValue, forKey: "player.repeat")
+        persistState()
+        updateNowPlayingQueueContext()
+    }
+
+    private func updateRemoteCommandAvailability() {
+        let commands = MPRemoteCommandCenter.shared()
+        let hasTrack = currentTrack != nil
+        let isPreparingPlayback = isResolvingURL || isLoadingPersonalFM || isBuffering
+        commands.playCommand.isEnabled = hasTrack && !isPlaying && !isPreparingPlayback
+        commands.pauseCommand.isEnabled = hasTrack && (isPlaying || isPreparingPlayback)
+        commands.togglePlayPauseCommand.isEnabled = hasTrack
+        commands.nextTrackCommand.isEnabled = canGoNext
+        commands.previousTrackCommand.isEnabled = canGoPrevious
+        commands.changePlaybackPositionCommand.isEnabled = hasTrack && duration > 0
+
+        let supportsQueueModes = hasTrack && source != .personalFM
+        commands.changeShuffleModeCommand.isEnabled = supportsQueueModes && playbackQueue.count > 1
+        commands.changeShuffleModeCommand.currentShuffleType = shuffleEnabled ? .items : .off
+        commands.changeRepeatModeCommand.isEnabled = supportsQueueModes
+        switch repeatMode {
+        case .off: commands.changeRepeatModeCommand.currentRepeatType = .off
+        case .one: commands.changeRepeatModeCommand.currentRepeatType = .one
+        case .all: commands.changeRepeatModeCommand.currentRepeatType = .all
+        }
     }
 
     private struct PersistedState: Codable {
