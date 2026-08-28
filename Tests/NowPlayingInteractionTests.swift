@@ -1,6 +1,57 @@
 import Testing
 @testable import SonimbusCore
 
+private enum TestRoute: Hashable {
+    case playlist(Int)
+    case artist(Int)
+}
+
+@Test func ordinaryTabDepartureDiscardsItsNavigationAndFocusContext() {
+    var state = RootTabPresentationState<TestRoute>()
+    state.path = [.playlist(42)]
+    state.requestNavigationFocusRestoration(.playlist(42))
+    state.requestTrackFocusRestoration(7)
+
+    let previousRootGeneration = state.rootActivationGeneration
+    let previousNavigationGeneration = state.navigationFocusRestorationGeneration
+    let previousTrackGeneration = state.trackFocusRestorationGeneration
+    state.resetToRoot()
+
+    #expect(state.path.isEmpty)
+    #expect(state.rootActivationGeneration == previousRootGeneration + 1)
+    #expect(state.navigationFocusRestorationGeneration == previousNavigationGeneration + 1)
+    #expect(state.navigationFocusRestorationRoute == nil)
+    #expect(state.trackFocusRestorationGeneration == previousTrackGeneration + 1)
+    #expect(state.trackFocusRestorationID == nil)
+}
+
+@Test func contextualNowPlayingReturnPreservesTheDetailNavigationPath() {
+    var state = RootTabPresentationState<TestRoute>()
+    state.path = [.playlist(42), .artist(9)]
+
+    state.requestTrackFocusRestoration(7)
+
+    #expect(state.path == [.playlist(42), .artist(9)])
+    #expect(state.trackFocusRestorationID == AnyHashable(7))
+    #expect(state.navigationFocusRestorationRoute == nil)
+}
+
+@Test func navigationAndTrackRestorationRequestsCannotRemainActiveTogether() {
+    var state = RootTabPresentationState<TestRoute>()
+
+    state.requestTrackFocusRestoration(7)
+    state.requestNavigationFocusRestoration(.playlist(42))
+    #expect(state.navigationFocusRestorationRoute == .playlist(42))
+    #expect(state.trackFocusRestorationID == nil)
+
+    state.requestTrackFocusRestoration(9)
+    #expect(state.navigationFocusRestorationRoute == nil)
+    #expect(state.trackFocusRestorationID == AnyHashable(9))
+
+    state.requestTrackFocusRestoration(nil)
+    #expect(state.trackFocusRestorationID == nil)
+}
+
 @Test func contextualAndTabBarPresentationsRemainDistinct() {
     var presentation = NowPlayingPresentationState()
 

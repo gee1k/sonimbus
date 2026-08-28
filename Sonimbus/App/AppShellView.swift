@@ -75,16 +75,6 @@ private enum RootTab: Hashable {
     var isContentTab: Bool { self != .nowPlaying }
 }
 
-private struct NavigationFocusRestorationState {
-    var generation = 0
-    var route: AppRoute?
-}
-
-private struct TrackFocusRestorationState {
-    var generation = 0
-    var trackID: AnyHashable?
-}
-
 enum RootContentAnchor: Hashable {
     case top
 }
@@ -96,15 +86,9 @@ struct AppShellView: View {
     @Environment(PlayerService.self) private var player
     @Environment(ToastCenter.self) private var toast
     @State private var selectedTab = RootTab.listenNow
-    @State private var listenNowPath: [AppRoute] = []
-    @State private var browsePath: [AppRoute] = []
-    @State private var searchPath: [AppRoute] = []
-    @State private var libraryPath: [AppRoute] = []
+    @State private var tabPresentations: [RootTab: RootTabPresentationState<AppRoute>] = [:]
     @State private var browseSession = BrowseSession()
     @State private var searchSession = SearchSession()
-    @State private var rootActivationGenerations: [RootTab: Int] = [:]
-    @State private var navigationFocusRestorations: [RootTab: NavigationFocusRestorationState] = [:]
-    @State private var trackFocusRestorations: [RootTab: TrackFocusRestorationState] = [:]
     @State private var lastContentTab = RootTab.listenNow
     @State private var contextualReturnFocusID: AnyHashable?
     @State private var nowPlayingPresentation = NowPlayingPresentationState()
@@ -114,25 +98,25 @@ struct AppShellView: View {
         ZStack {
             TVBackground()
             TabView(selection: rootTabSelection) {
-                tabNavigation(tab: .listenNow, path: $listenNowPath) {
+                tabNavigation(tab: .listenNow) {
                     HomeView()
                 }
                 .tag(RootTab.listenNow)
                 .tabItem { Label("现在就听", systemImage: "play.circle.fill") }
 
-                tabNavigation(tab: .browse, path: $browsePath) {
+                tabNavigation(tab: .browse) {
                     BrowseView(session: browseSession)
                 }
                 .tag(RootTab.browse)
                 .tabItem { Label("浏览", systemImage: "square.grid.2x2.fill") }
 
-                tabNavigation(tab: .search, path: $searchPath) {
+                tabNavigation(tab: .search) {
                     SearchView(session: searchSession)
                 }
                 .tag(RootTab.search)
                 .tabItem { Label("搜索", systemImage: "magnifyingglass") }
 
-                tabNavigation(tab: .library, path: $libraryPath) {
+                tabNavigation(tab: .library) {
                     LibraryView()
                 }
                 .tag(RootTab.library)
@@ -179,13 +163,7 @@ struct AppShellView: View {
     }
 
     private var selectedNavigationDepth: Int {
-        switch selectedTab {
-        case .listenNow: listenNowPath.count
-        case .browse: browsePath.count
-        case .search: searchPath.count
-        case .library: libraryPath.count
-        case .nowPlaying: 0
-        }
+        tabPresentations[selectedTab]?.path.count ?? 0
     }
 
     private var rootTabSelection: Binding<RootTab> {
@@ -203,23 +181,17 @@ struct AppShellView: View {
                     return
                 }
 
-                stopMVIfNeeded(in: selectedTab)
+                let outgoingTab = selectedTab
+                stopMVIfNeeded(in: outgoingTab)
                 selectedTab = requestedTab
                 lastContentTab = requestedTab
-                resetRootPresentation(for: requestedTab)
+                resetRootPresentation(for: outgoingTab)
             }
         )
     }
 
     private func stopMVIfNeeded(in tab: RootTab) {
-        let route: AppRoute?
-        switch tab {
-        case .listenNow: route = listenNowPath.last
-        case .browse: route = browsePath.last
-        case .search: route = searchPath.last
-        case .library: route = libraryPath.last
-        case .nowPlaying: route = nil
-        }
+        let route = tabPresentations[tab]?.path.last
         if case .mv = route {
             MVPlaybackController.shared.stop()
         }
@@ -265,35 +237,23 @@ struct AppShellView: View {
             contextualReturnFocusID = nil
             Task { @MainActor in
                 await Task.yield()
+                guard !nowPlayingPresentation.isPresented,
+                      selectedTab == destination else { return }
                 requestTrackFocusRestoration(focusID, in: destination)
             }
         } else {
             let destination = lastContentTab
+            resetRootPresentation(for: destination)
             selectedTab = destination
             _ = nowPlayingPresentation.dismiss()
-            Task { @MainActor in
-                await Task.yield()
-                guard !nowPlayingPresentation.isPresented,
-                      selectedTab == destination else { return }
-                resetRootPresentation(for: destination)
-            }
         }
     }
 
     private func popSelectedNavigation() {
-        let poppedRoute: AppRoute?
-        switch selectedTab {
-        case .listenNow:
-            poppedRoute = listenNowPath.popLast()
-        case .browse:
-            poppedRoute = browsePath.popLast()
-        case .search:
-            poppedRoute = searchPath.popLast()
-        case .library:
-            poppedRoute = libraryPath.popLast()
-        case .nowPlaying:
-            poppedRoute = nil
-        }
+        guard selectedTab.isContentTab else { return }
+        var presentation = presentationState(for: selectedTab)
+        let poppedRoute = presentation.path.popLast()
+        tabPresentations[selectedTab] = presentation
         guard let poppedRoute else { return }
         if case .mv = poppedRoute {
             MVPlaybackController.shared.stop()
@@ -303,12 +263,10 @@ struct AppShellView: View {
 
     private func tabNavigation<Content: View>(
         tab: RootTab,
-        path: Binding<[AppRoute]>,
         @ViewBuilder content: () -> Content
     ) -> some View {
-        let restoration = navigationFocusRestorations[tab] ?? NavigationFocusRestorationState()
-        let trackRestoration = trackFocusRestorations[tab] ?? TrackFocusRestorationState()
-        return NavigationStack(path: path) {
+        let presentation = presentationState(for: tab)
+        return NavigationStack(path: pathBinding(for: tab)) {
             content()
                 .navigationDestination(for: AppRoute.self) { route in
                     Group {
@@ -326,35 +284,50 @@ struct AppShellView: View {
                 }
         }
         .environment(\.handlesNavigationExit, true)
-        .environment(\.rootTabActivationGeneration, rootActivationGenerations[tab] ?? 0)
-        .environment(\.navigationFocusRestorationGeneration, restoration.generation)
-        .environment(\.navigationFocusRestorationRoute, restoration.route)
-        .environment(\.nowPlayingFocusRestorationGeneration, trackRestoration.generation)
-        .environment(\.nowPlayingFocusRestorationID, trackRestoration.trackID)
+        .environment(\.rootTabActivationGeneration, presentation.rootActivationGeneration)
+        .environment(
+            \.navigationFocusRestorationGeneration,
+            presentation.navigationFocusRestorationGeneration
+        )
+        .environment(\.navigationFocusRestorationRoute, presentation.navigationFocusRestorationRoute)
+        .environment(\.nowPlayingFocusRestorationGeneration, presentation.trackFocusRestorationGeneration)
+        .environment(\.nowPlayingFocusRestorationID, presentation.trackFocusRestorationID)
+    }
+
+    private func presentationState(for tab: RootTab) -> RootTabPresentationState<AppRoute> {
+        tabPresentations[tab] ?? RootTabPresentationState()
+    }
+
+    private func pathBinding(for tab: RootTab) -> Binding<[AppRoute]> {
+        Binding(
+            get: { presentationState(for: tab).path },
+            set: { path in
+                var presentation = presentationState(for: tab)
+                presentation.path = path
+                tabPresentations[tab] = presentation
+            }
+        )
     }
 
     private func resetRootPresentation(for tab: RootTab) {
         guard tab.isContentTab else { return }
-        rootActivationGenerations[tab, default: 0] &+= 1
-        var restoration = navigationFocusRestorations[tab] ?? NavigationFocusRestorationState()
-        restoration.route = nil
-        navigationFocusRestorations[tab] = restoration
+        var presentation = presentationState(for: tab)
+        presentation.resetToRoot()
+        tabPresentations[tab] = presentation
     }
 
     private func requestNavigationFocusRestoration(_ route: AppRoute, in tab: RootTab) {
         guard tab.isContentTab else { return }
-        var restoration = navigationFocusRestorations[tab] ?? NavigationFocusRestorationState()
-        restoration.route = route
-        restoration.generation &+= 1
-        navigationFocusRestorations[tab] = restoration
+        var presentation = presentationState(for: tab)
+        presentation.requestNavigationFocusRestoration(route)
+        tabPresentations[tab] = presentation
     }
 
     private func requestTrackFocusRestoration(_ trackID: AnyHashable?, in tab: RootTab) {
-        guard tab.isContentTab, let trackID else { return }
-        var restoration = trackFocusRestorations[tab] ?? TrackFocusRestorationState()
-        restoration.trackID = trackID
-        restoration.generation &+= 1
-        trackFocusRestorations[tab] = restoration
+        guard tab.isContentTab else { return }
+        var presentation = presentationState(for: tab)
+        presentation.requestTrackFocusRestoration(trackID)
+        tabPresentations[tab] = presentation
     }
 }
 

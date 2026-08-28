@@ -20,6 +20,38 @@ enum NowPlayingPresentationSource: Equatable {
     case tabBar
 }
 
+struct RootTabPresentationState<Route: Hashable> {
+    var path: [Route] = []
+    private(set) var rootActivationGeneration = 0
+    private(set) var navigationFocusRestorationGeneration = 0
+    private(set) var navigationFocusRestorationRoute: Route?
+    private(set) var trackFocusRestorationGeneration = 0
+    private(set) var trackFocusRestorationID: AnyHashable?
+
+    mutating func resetToRoot() {
+        path.removeAll()
+        rootActivationGeneration &+= 1
+        navigationFocusRestorationRoute = nil
+        navigationFocusRestorationGeneration &+= 1
+        trackFocusRestorationID = nil
+        trackFocusRestorationGeneration &+= 1
+    }
+
+    mutating func requestNavigationFocusRestoration(_ route: Route) {
+        navigationFocusRestorationRoute = route
+        navigationFocusRestorationGeneration &+= 1
+        trackFocusRestorationID = nil
+        trackFocusRestorationGeneration &+= 1
+    }
+
+    mutating func requestTrackFocusRestoration(_ trackID: AnyHashable?) {
+        trackFocusRestorationID = trackID
+        trackFocusRestorationGeneration &+= 1
+        navigationFocusRestorationRoute = nil
+        navigationFocusRestorationGeneration &+= 1
+    }
+}
+
 struct NowPlayingPresentationState: Equatable {
     private(set) var source: NowPlayingPresentationSource?
 
