@@ -24,70 +24,74 @@ struct NowPlayingView: View {
     @Environment(PlayerService.self) private var player
     @Environment(AccountStore.self) private var account
     @Environment(ToastCenter.self) private var toast
+    @Environment(\.openRouteFromNowPlaying) private var openRouteFromNowPlaying
     @Namespace private var focusScope
     let isActive: Bool
     let activationGeneration: Int
     let onDismiss: () -> Void
     @State private var interaction = NowPlayingInteractionState()
-    @State private var detailPath: [AppRoute] = []
-    @State private var lastSelectedDetailFocus: NowPlayingFocus?
     @State private var idleGeneration = 0
     @State private var expandsStage = false
     @State private var backgroundBreathes = false
     @State private var isInfoPresented = false
     @State private var isTimelineFocusEnabled = true
     @State private var modeFocusFallback: NowPlayingFocus?
+    @State private var pendingPlaybackFocusTrackID: Int?
     @FocusState private var focusedControl: NowPlayingFocus?
     @FocusState private var focusedQueueID: Int?
 
     var body: some View {
-        NavigationStack(path: $detailPath) {
-            ZStack {
-                background
-                if player.currentTrack == nil {
-                    emptyPlayer
-                } else {
-                    if !interaction.showsControls {
-                        immersiveSurface
-                            .disabled(isInfoPresented)
-                    }
-                    VStack(spacing: 0) {
-                        header
-                        stage
-                        if isInfoPresented, let track = player.currentTrack {
-                            NowPlayingInfoPanel(
-                                track: track,
-                                duration: player.duration > 0 ? player.duration : track.duration,
-                                playbackBadge: playbackBadgeText,
-                                artists: navigableArtists,
-                                album: navigableAlbum,
-                                openArtist: { artist in
-                                    isInfoPresented = false
-                                    openDetail(.artist(artist.id), returningTo: .info)
-                                },
-                                openAlbum: { album in
-                                    isInfoPresented = false
-                                    openDetail(.album(album.id), returningTo: .info)
-                                }
-                            )
-                            .transition(.move(edge: .bottom).combined(with: .opacity))
-                        } else {
-                            playbackChrome
-                        }
-                    }
-                    .id(player.currentTrack?.id)
-                    .padding(.horizontal, 76)
-                    .padding(.vertical, 30)
+        ZStack {
+            Color.clear
+                .frame(width: 1, height: 1)
+                .accessibilityElement()
+                .accessibilityIdentifier("now-playing-page")
+                .allowsHitTesting(false)
+            background
+            if player.currentTrack == nil {
+                emptyPlayer
+            } else {
+                if !interaction.showsControls {
+                    immersiveSurface
+                        .disabled(isInfoPresented)
                 }
-                toastOverlay
+                VStack(spacing: 0) {
+                    header
+                    stage
+                    if isInfoPresented, let track = player.currentTrack {
+                        NowPlayingInfoPanel(
+                            track: track,
+                            duration: player.duration > 0 ? player.duration : track.duration,
+                            playbackBadge: playbackBadgeText,
+                            artists: navigableArtists,
+                            album: navigableAlbum,
+                            openArtist: { artist in
+                                isInfoPresented = false
+                                openDetail(.artist(artist.id))
+                            },
+                            openAlbum: { album in
+                                isInfoPresented = false
+                                openDetail(.album(album.id))
+                            }
+                        )
+                        .transition(.move(edge: .bottom).combined(with: .opacity))
+                    } else {
+                        playbackChrome
+                            .task(id: pendingPlaybackFocusTrackID) {
+                                await fulfillPendingPlaybackFocus()
+                            }
+                    }
+                }
+                .id(player.currentTrack?.id)
+                .padding(.horizontal, 76)
+                .padding(.vertical, 30)
             }
-            .navigationDestination(for: AppRoute.self, destination: detailDestination)
+            toastOverlay
         }
-        .environment(\.handlesNavigationExit, true)
         .focusScope(focusScope)
         .modifier(
             NowPlayingExitCommand(
-                isActive: detailPath.isEmpty,
+                isActive: true,
                 action: handlePlayerExit
             )
         )
@@ -99,13 +103,13 @@ struct NowPlayingView: View {
         }
         .task(id: player.currentTrack?.id) {
             await animateBackgroundIfNeeded()
+            await expandStageIfNeeded()
         }
         .task(id: idleGeneration) {
             await hideControlsAfterIdleIfNeeded()
         }
         .onChange(of: isActive) { _, active in
             if !active {
-                stopDetailPlaybackIfNeeded()
                 isInfoPresented = false
                 modeFocusFallback = nil
                 focusedControl = nil
@@ -115,13 +119,15 @@ struct NowPlayingView: View {
         }
         .onChange(of: player.currentTrack?.id) { oldID, newID in
             guard isActive else { return }
-            if oldID != newID, newID != nil {
+            if oldID != newID, let newID {
                 isInfoPresented = false
                 interaction.showControls()
                 if interaction.panel == .queue {
+                    pendingPlaybackFocusTrackID = nil
                     requestQueueFocus(newID)
                 } else {
-                    requestControlFocus(.play)
+                    focusedControl = nil
+                    pendingPlaybackFocusTrackID = newID
                 }
                 markInteraction()
             } else if newID == nil {
@@ -302,6 +308,7 @@ struct NowPlayingView: View {
         return Group {
             if showsQueue {
                 queuePanel
+                    .accessibilityIdentifier("now-playing-queue-panel")
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .transition(.opacity.combined(with: .scale(scale: 0.985)))
             } else {
@@ -310,6 +317,7 @@ struct NowPlayingView: View {
 
                     if showsLyrics {
                         lyricsPanel
+                            .accessibilityIdentifier("now-playing-lyrics-panel")
                             .frame(maxWidth: .infinity, maxHeight: .infinity)
                             .focusSection()
                             .transition(.move(edge: .trailing).combined(with: .opacity))
@@ -444,7 +452,7 @@ struct NowPlayingView: View {
             artists: navigableArtists,
             isEnabled: interaction.showsControls,
             focus: $focusedControl,
-            openDetail: { openDetail($0, returningTo: .moreActions) }
+            openDetail: openDetail
         )
     }
 
@@ -839,6 +847,24 @@ struct NowPlayingView: View {
     private func requestControlFocus(_ target: NowPlayingFocus) {
         focusedQueueID = nil
         focusedControl = target
+        Task { @MainActor in
+            await Task.yield()
+            guard isActive, focusedControl == target else { return }
+            resetFocus(in: focusScope)
+        }
+    }
+
+    @MainActor
+    private func fulfillPendingPlaybackFocus() async {
+        guard let trackID = pendingPlaybackFocusTrackID else { return }
+        await Task.yield()
+        guard !Task.isCancelled,
+              isActive,
+              player.currentTrack?.id == trackID,
+              interaction.panel != .queue,
+              !isInfoPresented else { return }
+        pendingPlaybackFocusTrackID = nil
+        requestControlFocus(.play)
     }
 
     private func showControls(preferredFocus: NowPlayingFocus? = nil) {
@@ -855,12 +881,10 @@ struct NowPlayingView: View {
             try? await Task.sleep(for: .milliseconds(240))
             guard !Task.isCancelled,
                   isActive,
-                  detailPath.isEmpty,
                   interaction.showsControls,
                   interaction.panel != .queue,
                   !isInfoPresented else { return }
-            focusedControl = preferredFocus
-            await Task.yield()
+            requestControlFocus(preferredFocus)
         }
     }
 
@@ -920,70 +944,32 @@ struct NowPlayingView: View {
             closeInfoPanel()
             return
         }
-        if interaction.handleBack(
+        guard interaction.handleBack(
             hasCurrentTrack: player.currentTrack != nil,
             allowsLyricsNavigation: hasNavigableLyrics
-        ) == .handled {
-            if interaction.panel == .queue {
-                requestQueueFocus()
-            } else if interaction.showsControls {
-                requestControlFocus(.queueMode)
-            } else {
-                requestControlFocus(.immersive)
-            }
-            markInteraction()
-        } else {
+        ) == .handled else {
             onDismiss()
+            return
         }
-    }
-
-    private func popDetail() {
-        guard let removedRoute = detailPath.popLast() else { return }
-        if case .mv = removedRoute {
-            MVPlaybackController.shared.stop()
+        if interaction.panel == .queue {
+            requestQueueFocus()
+        } else if interaction.showsControls {
+            requestControlFocus(.queueMode)
+        } else {
+            requestControlFocus(.immersive)
         }
-        if detailPath.isEmpty {
-            restoreDetailFocus()
-        }
-    }
-
-    private func restoreDetailFocus() {
-        guard let focus = lastSelectedDetailFocus else { return }
-        interaction.showControls()
         markInteraction()
-        Task { @MainActor in
-            await Task.yield()
-            requestControlFocus(focus)
-        }
     }
 
-    private func openDetail(_ route: AppRoute, returningTo focus: NowPlayingFocus) {
-        lastSelectedDetailFocus = focus
-        detailPath.append(route)
-    }
-
-    @ViewBuilder
-    private func detailDestination(_ route: AppRoute) -> some View {
-        Group {
-            switch route {
-            case .playlist(let id): PlaylistDetailView(playlistID: id)
-            case .album(let id): AlbumDetailView(albumID: id)
-            case .artist(let id): ArtistDetailView(artistID: id)
-            case .mv(let id): MVDetailView(mvID: id)
-            case .dailySongs: DailySongsView()
-            case .recents: RecentPlaysView()
-            case .cloud: CloudMusicView()
-            case .settings: PlaybackSettingsView()
-            }
-        }
-        .onExitCommand(perform: popDetail)
+    private func openDetail(_ route: AppRoute) {
+        focusedControl = nil
+        focusedQueueID = nil
+        openRouteFromNowPlaying?(route)
     }
 
     @MainActor
     private func activatePlayerIfNeeded() async {
         guard isActive else { return }
-        stopDetailPlaybackIfNeeded()
-        detailPath = []
         interaction.activate()
         expandsStage = reduceMotion && interaction.panel != .artwork
         isInfoPresented = false
@@ -993,15 +979,23 @@ struct NowPlayingView: View {
         await Task.yield()
         guard !Task.isCancelled, isActive else { return }
         guard player.currentTrack != nil else {
+            pendingPlaybackFocusTrackID = nil
             requestEmptyPlayerFocus()
             return
         }
-        focusedControl = .play
-        resetFocus(in: focusScope)
+        pendingPlaybackFocusTrackID = player.currentTrack?.id
         markInteraction()
+        await expandStageIfNeeded()
+    }
+
+    @MainActor
+    private func expandStageIfNeeded() async {
         guard interaction.panel != .artwork, !reduceMotion else { return }
         try? await Task.sleep(for: .milliseconds(420))
-        guard !Task.isCancelled, isActive, interaction.panel != .artwork else { return }
+        guard !Task.isCancelled,
+              isActive,
+              player.currentTrack != nil,
+              interaction.panel != .artwork else { return }
         withAnimation(.spring(response: 0.72, dampingFraction: 0.88)) {
             expandsStage = true
         }
@@ -1021,7 +1015,6 @@ struct NowPlayingView: View {
     @MainActor
     private func hideControlsAfterIdleIfNeeded() async {
         guard isActive,
-              detailPath.isEmpty,
               interaction.showsControls,
               interaction.panel != .queue,
               !isInfoPresented,
@@ -1031,7 +1024,6 @@ struct NowPlayingView: View {
         try? await Task.sleep(for: .seconds(6))
         guard !Task.isCancelled,
               isActive,
-              detailPath.isEmpty,
               interaction.showsControls,
               interaction.panel != .queue,
               !isInfoPresented,
@@ -1061,7 +1053,7 @@ struct NowPlayingView: View {
         markInteraction()
         Task { @MainActor in
             await Task.yield()
-            guard interaction.showsControls, detailPath.isEmpty else { return }
+            guard interaction.showsControls else { return }
             requestControlFocus(.info)
         }
     }
@@ -1085,11 +1077,6 @@ struct NowPlayingView: View {
         return !lines.isEmpty
     }
 
-    private func stopDetailPlaybackIfNeeded() {
-        if case .mv = detailPath.last {
-            MVPlaybackController.shared.stop()
-        }
-    }
 }
 
 private struct NowPlayingExitCommand: ViewModifier {

@@ -2,8 +2,6 @@ import SwiftUI
 
 struct HomeView: View {
     @Environment(\.openNowPlaying) private var openNowPlaying
-    @Environment(\.navigationFocusRestorationGeneration) private var focusRestorationGeneration
-    @Environment(\.navigationFocusRestorationRoute) private var focusRestorationRoute
     @Environment(\.rootTabActivationGeneration) private var rootTabActivationGeneration
     @Environment(AccountStore.self) private var account
     @Environment(PlayerService.self) private var player
@@ -14,9 +12,6 @@ struct HomeView: View {
     @State private var errorMessage: String?
     @State private var showLogin = false
     @State private var loadGeneration = 0
-    @State private var lastFocusedRoute: AppRoute?
-    @FocusState private var focusedRoute: AppRoute?
-    @FocusState private var focusedTrackID: AnyHashable?
 
     var body: some View {
         ScrollViewReader { proxy in
@@ -27,12 +22,17 @@ struct HomeView: View {
 
                 if !visibleRecentTracks.isEmpty {
                     HorizontalShelf(title: "最近播放", subtitle: "继续你刚才的音乐") {
-                        ForEach(visibleRecentTracks.prefix(12)) { track in
+                        ForEach(Array(visibleRecentTracks.prefix(12).enumerated()), id: \.element.id) { position, track in
                             TrackCard(
                                 track: track,
                                 tracks: visibleRecentTracks,
                                 source: .recent,
-                                focusBinding: $focusedTrackID
+                                originSurface: .homeRecent,
+                                occurrence: occurrence(
+                                    of: track.id,
+                                    before: position,
+                                    in: visibleRecentTracks
+                                )
                             )
                         }
                     }
@@ -40,12 +40,17 @@ struct HomeView: View {
 
                 if !visibleNewSongs.isEmpty {
                     HorizontalShelf(title: "为你推荐的新歌", subtitle: "根据你的口味持续更新") {
-                        ForEach(visibleNewSongs) { track in
+                        ForEach(Array(visibleNewSongs.enumerated()), id: \.element.id) { position, track in
                             TrackCard(
                                 track: track,
                                 tracks: visibleNewSongs,
                                 source: .newSongs,
-                                focusBinding: $focusedTrackID
+                                originSurface: .homeNewSongs,
+                                occurrence: occurrence(
+                                    of: track.id,
+                                    before: position,
+                                    in: visibleNewSongs
+                                )
                             )
                         }
                     }
@@ -55,11 +60,7 @@ struct HomeView: View {
                     HorizontalShelf(title: account.isLoggedIn ? "专属推荐" : "热门推荐") {
                         ForEach(playlists) { playlist in
                             PlaylistCard(playlist: playlist)
-                                .focused($focusedRoute, equals: .playlist(playlist.id))
                                 .id(AppRoute.playlist(playlist.id))
-                                .simultaneousGesture(TapGesture().onEnded {
-                                    lastFocusedRoute = .playlist(playlist.id)
-                                })
                         }
                     }
                 }
@@ -81,23 +82,15 @@ struct HomeView: View {
                 .id(RootContentAnchor.top)
             }
             .background(TVBackground(tint: .purple))
-            .task(id: focusRestorationGeneration) {
-                await restoreNavigationFocus(using: proxy)
-            }
             .onChange(of: rootTabActivationGeneration) { _, generation in
                 Task { await resetRootPresentation(for: generation, using: proxy) }
             }
         }
         .fullScreenCover(isPresented: $showLogin) { LoginView() }
         .task(id: account.profile?.userId) { await load() }
-        .onChange(of: focusedRoute) { _, route in
-            if let route { lastFocusedRoute = route }
-        }
-        .onChange(of: rootTabActivationGeneration) { _, _ in
-            focusedRoute = nil
-            focusedTrackID = nil
-            lastFocusedRoute = nil
-        }
+        .playbackOriginFocusScope(
+            surfaces: [.homeRecent, .homeNewSongs, .homePersonalFM]
+        )
     }
 
     private var visibleRecentTracks: [Track] {
@@ -106,6 +99,28 @@ struct HomeView: View {
 
     private var visibleNewSongs: [Track] {
         player.visibleTracks(newSongs)
+    }
+
+    private func occurrence(of trackID: Int, before position: Int, in tracks: [Track]) -> Int {
+        tracks.prefix(position).reduce(into: 0) { count, candidate in
+            if candidate.id == trackID { count += 1 }
+        }
+    }
+
+    @MainActor
+    private func resetRootPresentation(
+        for generation: Int,
+        using proxy: ScrollViewProxy
+    ) async {
+        guard generation > 0 else { return }
+        await Task.yield()
+        guard !Task.isCancelled,
+              generation == rootTabActivationGeneration else { return }
+        var transaction = Transaction()
+        transaction.disablesAnimations = true
+        withTransaction(transaction) {
+            proxy.scrollTo(RootContentAnchor.top, anchor: .top)
+        }
     }
 
     private var header: some View {
@@ -161,9 +176,7 @@ struct HomeView: View {
                 }
                 .buttonStyle(TVHeroButtonStyle())
                 .frame(maxWidth: .infinity)
-                .focused($focusedRoute, equals: .dailySongs)
                 .id(AppRoute.dailySongs)
-                .simultaneousGesture(TapGesture().onEnded { lastFocusedRoute = .dailySongs })
             } else {
                 Button {
                     showLogin = true
@@ -177,7 +190,7 @@ struct HomeView: View {
             Button {
                 if account.isLoggedIn {
                     player.startPersonalFM()
-                    openNowPlaying?(nil)
+                    openNowPlaying?(.action(.homePersonalFM, .play))
                 } else {
                     showLogin = true
                 }
@@ -190,6 +203,8 @@ struct HomeView: View {
                 )
             }
             .buttonStyle(TVHeroButtonStyle())
+            .accessibilityIdentifier("home-personal-fm")
+            .playbackOriginFocus(.action(.homePersonalFM, .play))
             .frame(maxWidth: .infinity)
         }
         .padding(.horizontal, TVTheme.horizontalPadding)
@@ -212,39 +227,20 @@ struct HomeView: View {
     }
 
     @MainActor
-    private func restoreNavigationFocus(using proxy: ScrollViewProxy) async {
-        guard let route = focusRestorationRoute else { return }
-        try? await Task.sleep(for: .milliseconds(80))
-        guard !Task.isCancelled else { return }
-        withAnimation(.easeOut(duration: 0.18)) {
-            proxy.scrollTo(route, anchor: .center)
-        }
-        try? await Task.sleep(for: .milliseconds(140))
-        guard !Task.isCancelled else { return }
-        lastFocusedRoute = route
-        focusedRoute = route
-    }
-
-    @MainActor
-    private func resetRootPresentation(
-        for generation: Int,
-        using proxy: ScrollViewProxy
-    ) async {
-        guard generation > 0 else { return }
-        await Task.yield()
-        guard !Task.isCancelled,
-              generation == rootTabActivationGeneration else { return }
-        var transaction = Transaction()
-        transaction.disablesAnimations = true
-        withTransaction(transaction) {
-            proxy.scrollTo(RootContentAnchor.top, anchor: .top)
-        }
-    }
-
-    @MainActor
     private func load() async {
         loadGeneration &+= 1
         let generation = loadGeneration
+#if DEBUG
+        if PlayerService.usesUITestFixture {
+            playlists = []
+            newSongs = ProcessInfo.processInfo.environment["SONIMBUS_UI_DUPLICATE_TRACK"] == "1"
+                ? PlayerService.uiTestTracks
+                : []
+            errorMessage = nil
+            isLoading = false
+            return
+        }
+#endif
         let requestedUserID = account.profile?.userId
         let requestedLoggedIn = account.isLoggedIn
         isLoading = true

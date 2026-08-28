@@ -1,55 +1,39 @@
 import Testing
 @testable import SonimbusCore
 
-private enum TestRoute: Hashable {
-    case playlist(Int)
-    case artist(Int)
+private enum TestTab: Hashable {
+    case listenNow
+    case browse
 }
 
-@Test func ordinaryTabDepartureDiscardsItsNavigationAndFocusContext() {
-    var state = RootTabPresentationState<TestRoute>()
-    state.path = [.playlist(42)]
-    state.requestNavigationFocusRestoration(.playlist(42))
-    state.requestTrackFocusRestoration(7)
+private enum TestRoute: Hashable {
+    case daily
+    case album(Int)
+}
 
-    let previousRootGeneration = state.rootActivationGeneration
-    let previousNavigationGeneration = state.navigationFocusRestorationGeneration
-    let previousTrackGeneration = state.trackFocusRestorationGeneration
+@Test func rootTabResetClearsOnlyItsOwnPathAndAdvancesGeneration() {
+    var state = RootTabPresentationState<TestRoute>()
+    state.path = [.daily, .album(7)]
+
     state.resetToRoot()
 
     #expect(state.path.isEmpty)
-    #expect(state.rootActivationGeneration == previousRootGeneration + 1)
-    #expect(state.navigationFocusRestorationGeneration == previousNavigationGeneration + 1)
-    #expect(state.navigationFocusRestorationRoute == nil)
-    #expect(state.trackFocusRestorationGeneration == previousTrackGeneration + 1)
-    #expect(state.trackFocusRestorationID == nil)
+    #expect(state.rootActivationGeneration == 1)
 }
 
-@Test func contextualNowPlayingReturnPreservesTheDetailNavigationPath() {
-    var state = RootTabPresentationState<TestRoute>()
-    state.path = [.playlist(42), .artist(9)]
+@Test func navigationReturnContextRequiresTheSameTabAndExactParentPath() {
+    let source = PlaybackOriginFocus.track(.homeRecent, trackID: 42, occurrence: 0)
+    let context = NavigationReturnContext(
+        tab: TestTab.listenNow,
+        parentPath: [TestRoute.daily],
+        focus: source
+    )
 
-    state.requestTrackFocusRestoration(7)
-
-    #expect(state.path == [.playlist(42), .artist(9)])
-    #expect(state.trackFocusRestorationID == AnyHashable(7))
-    #expect(state.navigationFocusRestorationRoute == nil)
-}
-
-@Test func navigationAndTrackRestorationRequestsCannotRemainActiveTogether() {
-    var state = RootTabPresentationState<TestRoute>()
-
-    state.requestTrackFocusRestoration(7)
-    state.requestNavigationFocusRestoration(.playlist(42))
-    #expect(state.navigationFocusRestorationRoute == .playlist(42))
-    #expect(state.trackFocusRestorationID == nil)
-
-    state.requestTrackFocusRestoration(9)
-    #expect(state.navigationFocusRestorationRoute == nil)
-    #expect(state.trackFocusRestorationID == AnyHashable(9))
-
-    state.requestTrackFocusRestoration(nil)
-    #expect(state.trackFocusRestorationID == nil)
+    #expect(context.matches(tab: .listenNow, parentPath: [.daily]))
+    #expect(!context.matches(tab: .browse, parentPath: [.daily]))
+    #expect(!context.matches(tab: .listenNow, parentPath: [.album(7)]))
+    #expect(context.shouldDiscard(when: .listenNow, popsToDepth: 1))
+    #expect(!context.shouldDiscard(when: .browse, popsToDepth: 0))
 }
 
 @Test func contextualAndTabBarPresentationsRemainDistinct() {
@@ -62,6 +46,31 @@ private enum TestRoute: Hashable {
 
     presentation.present(from: .tabBar)
     #expect(presentation.dismiss() == .tabBar)
+}
+
+@Test func tabBarDismissalAllowsAnImmediateDeliberateReentry() {
+    var presentation = NowPlayingPresentationState()
+
+    let initialPresentation = presentation.present(from: .tabBar)
+    #expect(initialPresentation)
+    #expect(presentation.dismiss() == .tabBar)
+    let deliberateTabRequest = presentation.present(from: .tabBar)
+    #expect(deliberateTabRequest)
+}
+
+@Test func playbackOriginUsesStableOccurrenceInsteadOfMutableListPosition() {
+    let original = PlaybackOriginFocus.track(.homeRecent, trackID: 42, occurrence: 0)
+    let sameTrackAfterReordering = PlaybackOriginFocus.track(
+        .homeRecent,
+        trackID: 42,
+        occurrence: 0
+    )
+    let duplicateOccurrence = PlaybackOriginFocus.track(.homeRecent, trackID: 42, occurrence: 1)
+    let otherShelf = PlaybackOriginFocus.track(.homeNewSongs, trackID: 42, occurrence: 0)
+
+    #expect(original == sameTrackAfterReordering)
+    #expect(original != duplicateOccurrence)
+    #expect(original != otherShelf)
 }
 
 @Test func repeatedActivationDoesNotReplaceTheOriginalPresentationSource() {

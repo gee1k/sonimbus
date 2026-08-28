@@ -31,7 +31,18 @@
 		B00000000000000000000024 /* ManagementViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000026 /* ManagementViews.swift */; };
 		B00000000000000000000025 /* NowPlayingInteraction.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000027 /* NowPlayingInteraction.swift */; };
 		B00000000000000000000026 /* ContentStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000028 /* ContentStore.swift */; };
+		B10000000000000000000001 /* NavigationRegressionUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F10000000000000000000001 /* NavigationRegressionUITests.swift */; };
 /* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		C10000000000000000000001 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = A00000000000000000000001 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = A00000000000000000000002;
+			remoteInfo = Sonimbus;
+		};
+/* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
 		F00000000000000000000001 /* SonimbusApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SonimbusApp.swift; sourceTree = "<group>"; };
@@ -61,10 +72,19 @@
 		F00000000000000000000026 /* ManagementViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ManagementViews.swift; sourceTree = "<group>"; };
 		F00000000000000000000027 /* NowPlayingInteraction.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NowPlayingInteraction.swift; sourceTree = "<group>"; };
 		F00000000000000000000028 /* ContentStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentStore.swift; sourceTree = "<group>"; };
+		F10000000000000000000001 /* NavigationRegressionUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NavigationRegressionUITests.swift; sourceTree = "<group>"; };
+		F10000000000000000000002 /* SonimbusUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = SonimbusUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
 		D00000000000000000000001 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		D10000000000000000000001 /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -78,8 +98,17 @@
 			isa = PBXGroup;
 			children = (
 				E00000000000000000000002 /* Sonimbus */,
+				E10000000000000000000001 /* SonimbusUITests */,
 				E00000000000000000000008 /* Products */,
 			);
+			sourceTree = "<group>";
+		};
+		E10000000000000000000001 /* SonimbusUITests */ = {
+			isa = PBXGroup;
+			children = (
+				F10000000000000000000001 /* NavigationRegressionUITests.swift */,
+			);
+			path = SonimbusUITests;
 			sourceTree = "<group>";
 		};
 		E00000000000000000000002 /* Sonimbus */ = {
@@ -159,6 +188,7 @@
 			isa = PBXGroup;
 			children = (
 				F00000000000000000000022 /* Sonimbus.app */,
+				F10000000000000000000002 /* SonimbusUITests.xctest */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -183,6 +213,24 @@
 			productReference = F00000000000000000000022 /* Sonimbus.app */;
 			productType = "com.apple.product-type.application";
 		};
+		A10000000000000000000002 /* SonimbusUITests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = A10000000000000000000006 /* Build configuration list for PBXNativeTarget "SonimbusUITests" */;
+			buildPhases = (
+				D10000000000000000000003 /* Sources */,
+				D10000000000000000000001 /* Frameworks */,
+				D10000000000000000000002 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				C10000000000000000000002 /* PBXTargetDependency */,
+			);
+			name = SonimbusUITests;
+			productName = SonimbusUITests;
+			productReference = F10000000000000000000002 /* SonimbusUITests.xctest */;
+			productType = "com.apple.product-type.bundle.ui-testing";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -195,6 +243,10 @@
 				TargetAttributes = {
 					A00000000000000000000002 = {
 						CreatedOnToolsVersion = 26.5;
+					};
+					A10000000000000000000002 = {
+						CreatedOnToolsVersion = 26.5;
+						TestTargetID = A00000000000000000000002;
 					};
 				};
 			};
@@ -213,6 +265,7 @@
 			projectRoot = "";
 			targets = (
 				A00000000000000000000002 /* Sonimbus */,
+				A10000000000000000000002 /* SonimbusUITests */,
 			);
 		};
 /* End PBXProject section */
@@ -223,6 +276,13 @@
 			buildActionMask = 2147483647;
 			files = (
 				B00000000000000000000020 /* Assets.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		D10000000000000000000002 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -259,7 +319,23 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		D10000000000000000000003 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				B10000000000000000000001 /* NavigationRegressionUITests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		C10000000000000000000002 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = A00000000000000000000002 /* Sonimbus */;
+			targetProxy = C10000000000000000000001 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
 		A00000000000000000000004 /* Debug */ = {
@@ -335,6 +411,38 @@
 			};
 			name = Release;
 		};
+		A10000000000000000000007 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				GENERATE_INFOPLIST_FILE = YES;
+				PRODUCT_BUNDLE_IDENTIFIER = com.svend.sonimbus.uitests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = appletvos;
+				SUPPORTED_PLATFORMS = appletvsimulator;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 3;
+				TEST_TARGET_NAME = Sonimbus;
+				TVOS_DEPLOYMENT_TARGET = 17.0;
+			};
+			name = Debug;
+		};
+		A10000000000000000000008 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				GENERATE_INFOPLIST_FILE = YES;
+				PRODUCT_BUNDLE_IDENTIFIER = com.svend.sonimbus.uitests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = appletvos;
+				SUPPORTED_PLATFORMS = appletvsimulator;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 3;
+				TEST_TARGET_NAME = Sonimbus;
+				TVOS_DEPLOYMENT_TARGET = 17.0;
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -352,6 +460,15 @@
 			buildConfigurations = (
 				A00000000000000000000007 /* Debug */,
 				A00000000000000000000008 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		A10000000000000000000006 /* Build configuration list for PBXNativeTarget "SonimbusUITests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				A10000000000000000000007 /* Debug */,
+				A10000000000000000000008 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;

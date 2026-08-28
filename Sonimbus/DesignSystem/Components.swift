@@ -362,6 +362,7 @@ struct MVCard: View {
             .frame(width: width, alignment: .leading)
         }
         .buttonStyle(TVCardButtonStyle(cornerRadius: 22))
+        .accessibilityIdentifier("mv-card-\(mv.id)")
         .simultaneousGesture(TapGesture().onEnded {
             MVPlaybackController.shared.configureQueue(queue.isEmpty ? [mv] : queue, startingAt: mv.id)
         })
@@ -370,16 +371,15 @@ struct MVCard: View {
 
 struct TrackCard: View {
     @Environment(\.openNowPlaying) private var openNowPlaying
-    @Environment(\.nowPlayingFocusRestorationGeneration) private var focusRestorationGeneration
-    @Environment(\.nowPlayingFocusRestorationID) private var focusRestorationID
     @Environment(AccountStore.self) private var account
     @Environment(PlayerService.self) private var player
 
     let track: Track
     let tracks: [Track]
     let source: PlaySource
+    let originSurface: PlaybackOriginSurface
+    let occurrence: Int
     var width: CGFloat = 250
-    var focusBinding: FocusState<AnyHashable?>.Binding? = nil
 
     var body: some View {
         Button {
@@ -400,8 +400,10 @@ struct TrackCard: View {
             .frame(width: width, alignment: .leading)
         }
         .buttonStyle(TVCardButtonStyle())
-        .modifier(OptionalTrackFocus(target: AnyHashable(track.id), binding: focusBinding))
-        .task(id: focusRestorationGeneration) { restoreFocusIfNeeded() }
+        .accessibilityIdentifier(
+            "track-card-\(originSurface.accessibilityID)-\(track.id)-\(occurrence)"
+        )
+        .playbackOriginFocus(.track(originSurface, trackID: track.id, occurrence: occurrence))
         .contextMenu {
             Button("下一首播放") { player.playNext(track) }
             Button("添加到队列") { player.addToQueue(track) }
@@ -430,22 +432,13 @@ struct TrackCard: View {
     }
 
     private func presentNowPlaying() {
-        openNowPlaying?(AnyHashable(track.id))
-    }
-
-    @MainActor
-    private func restoreFocusIfNeeded() {
-        let target = AnyHashable(track.id)
-        guard focusRestorationID == target, let focusBinding else { return }
-        focusBinding.wrappedValue = target
+        openNowPlaying?(.track(originSurface, trackID: track.id, occurrence: occurrence))
     }
 }
 
 struct TrackRow: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.openNowPlaying) private var openNowPlaying
-    @Environment(\.nowPlayingFocusRestorationGeneration) private var focusRestorationGeneration
-    @Environment(\.nowPlayingFocusRestorationID) private var focusRestorationID
     @Environment(AccountStore.self) private var account
     @Environment(PlayerService.self) private var player
 
@@ -453,9 +446,9 @@ struct TrackRow: View {
     let index: Int
     let tracks: [Track]
     let source: PlaySource
+    let originSurface: PlaybackOriginSurface
     var cloudMatchAction: (() -> Void)?
     var cloudDeleteAction: (() -> Void)?
-    var focusBinding: FocusState<AnyHashable?>.Binding? = nil
 
     var body: some View {
         Button {
@@ -518,8 +511,10 @@ struct TrackRow: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(TrackRowButtonStyle())
-        .modifier(OptionalTrackFocus(target: AnyHashable(track.id), binding: focusBinding))
-        .task(id: focusRestorationGeneration) { restoreFocusIfNeeded() }
+        .accessibilityIdentifier(
+            "track-row-\(originSurface.accessibilityID)-\(track.id)-\(occurrence)"
+        )
+        .playbackOriginFocus(.track(originSurface, trackID: track.id, occurrence: occurrence))
         .contextMenu {
             Button("立即播放") {
                 player.play(tracks, source: source, startingAt: track)
@@ -566,29 +561,19 @@ struct TrackRow: View {
     }
 
     private func presentNowPlaying() {
-        openNowPlaying?(AnyHashable(track.id))
+        openNowPlaying?(.track(originSurface, trackID: track.id, occurrence: occurrence))
     }
 
-    @MainActor
-    private func restoreFocusIfNeeded() {
-        let target = AnyHashable(track.id)
-        guard focusRestorationID == target, let focusBinding else { return }
-        focusBinding.wrappedValue = target
+    private var occurrence: Int {
+        tracks.prefix(index).reduce(into: 0) { count, candidate in
+            if candidate.id == track.id { count += 1 }
+        }
     }
 }
 
-private struct OptionalTrackFocus: ViewModifier {
-    let target: AnyHashable
-    let binding: FocusState<AnyHashable?>.Binding?
-
-    @ViewBuilder
-    func body(content: Content) -> some View {
-        if let binding {
-            content.focused(binding, equals: target)
-        } else {
-            content
-        }
-    }
+private struct PlaybackOriginFocusContext {
+    let binding: FocusState<PlaybackOriginFocus?>.Binding
+    let scope: Namespace.ID
 }
 
 private struct TVInitialFocusModifier<Value: Hashable>: ViewModifier {
@@ -613,6 +598,134 @@ private struct TVInitialFocusModifier<Value: Hashable>: ViewModifier {
     }
 }
 
+private struct PlaybackOriginFocusContextKey: EnvironmentKey {
+    static let defaultValue: PlaybackOriginFocusContext? = nil
+}
+
+private extension EnvironmentValues {
+    var playbackOriginFocusContext: PlaybackOriginFocusContext? {
+        get { self[PlaybackOriginFocusContextKey.self] }
+        set { self[PlaybackOriginFocusContextKey.self] = newValue }
+    }
+}
+
+private struct PlaybackOriginFocusModifier: ViewModifier {
+    @Environment(\.playbackFocusRestorationRequest) private var request
+    @Environment(\.completePlaybackFocusRestoration) private var completeRestoration
+    @Environment(\.playbackOriginFocusContext) private var context
+    @Environment(\.isFocused) private var isFocused
+    let target: PlaybackOriginFocus
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if let context {
+            content
+                .id(target)
+                .focused(context.binding, equals: target)
+                .prefersDefaultFocus(request?.origin == target, in: context.scope)
+                .onChange(of: isFocused) { _, focused in
+                    guard focused,
+                          let request,
+                          request.origin == target else { return }
+                    completeRestoration?(request)
+                }
+                .task(id: request?.generation) {
+                    guard isFocused,
+                          let request,
+                          request.origin == target else { return }
+                    completeRestoration?(request)
+                }
+        } else {
+            content
+        }
+    }
+}
+
+private struct PlaybackOriginFocusScopeModifier: ViewModifier {
+    @Environment(\.playbackFocusRestorationRequest) private var request
+    @Environment(\.resetFocus) private var resetFocus
+    let surfaces: Set<PlaybackOriginSurface>
+    let defaultFocus: PlaybackOriginFocus?
+    @Namespace private var focusScope
+    @FocusState private var focusedOrigin: PlaybackOriginFocus?
+    @State private var hasRequestedInitialFocus = false
+
+    func body(content: Content) -> some View {
+        ScrollViewReader { proxy in
+            content
+                .environment(
+                    \.playbackOriginFocusContext,
+                    PlaybackOriginFocusContext(binding: $focusedOrigin, scope: focusScope)
+                )
+                .focusScope(focusScope)
+                .modifier(
+                    PlaybackDefaultFocusModifier(
+                        binding: $focusedOrigin,
+                        target: request.flatMap { request in
+                            surfaces.contains(request.origin.surface) ? request.origin : nil
+                        } ?? defaultFocus
+                    )
+                )
+                .task(id: defaultFocus) {
+                    guard !hasRequestedInitialFocus,
+                          request == nil,
+                          let defaultFocus else { return }
+                    await nextMainRunLoop()
+                    guard !Task.isCancelled, request == nil else { return }
+                    focusedOrigin = defaultFocus
+                    await nextMainRunLoop()
+                    guard !Task.isCancelled,
+                          request == nil,
+                          focusedOrigin == defaultFocus else { return }
+                    hasRequestedInitialFocus = true
+                    resetFocus(in: focusScope)
+                }
+                .task(id: request?.generation) {
+                    guard let request,
+                          surfaces.contains(request.origin.surface) else { return }
+                    focusedOrigin = nil
+                    await nextMainRunLoop()
+                    guard !Task.isCancelled else { return }
+                    var transaction = Transaction()
+                    transaction.disablesAnimations = true
+                    withTransaction(transaction) {
+                        proxy.scrollTo(request.origin, anchor: .center)
+                    }
+                    await nextMainRunLoop()
+                    guard !Task.isCancelled else { return }
+                    focusedOrigin = request.origin
+                    await nextMainRunLoop()
+                    guard !Task.isCancelled,
+                          focusedOrigin == request.origin else { return }
+                    resetFocus(in: focusScope)
+                }
+        }
+    }
+
+    @MainActor
+    private func nextMainRunLoop() async {
+        await withCheckedContinuation { continuation in
+            DispatchQueue.main.async {
+                continuation.resume()
+            }
+        }
+    }
+}
+
+private struct PlaybackDefaultFocusModifier: ViewModifier {
+    let binding: FocusState<PlaybackOriginFocus?>.Binding
+    let target: PlaybackOriginFocus?
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if let target {
+            content.defaultFocus(binding, target, priority: .userInitiated)
+        } else {
+            content
+        }
+    }
+}
+
 extension View {
     func tvInitialFocus<Value: Hashable>(
         _ binding: FocusState<Value?>.Binding,
@@ -620,6 +733,22 @@ extension View {
         in scope: Namespace.ID
     ) -> some View {
         modifier(TVInitialFocusModifier(binding: binding, target: target, scope: scope))
+    }
+
+    func playbackOriginFocus(_ target: PlaybackOriginFocus) -> some View {
+        modifier(PlaybackOriginFocusModifier(target: target))
+    }
+
+    func playbackOriginFocusScope(
+        surfaces: Set<PlaybackOriginSurface>,
+        defaultFocus: PlaybackOriginFocus? = nil
+    ) -> some View {
+        modifier(
+            PlaybackOriginFocusScopeModifier(
+                surfaces: surfaces,
+                defaultFocus: defaultFocus
+            )
+        )
     }
 }
 

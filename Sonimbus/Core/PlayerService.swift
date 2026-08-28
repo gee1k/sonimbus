@@ -28,6 +28,22 @@ enum PlaySource: Codable, Hashable {
         guard case .playlist(let id) = self else { return nil }
         return id
     }
+
+    var playbackCollectionOrigin: PlaybackCollectionOrigin {
+        switch self {
+        case .playlist(let id): .playlist(id)
+        case .intelligence(let id): .intelligence(id)
+        case .album(let id): .album(id)
+        case .artist(let id): .artist(id)
+        case .daily: .daily
+        case .newSongs: .newSongs
+        case .recent: .recent
+        case .cloud: .cloud
+        case .search: .search
+        case .personalFM: .personalFM
+        case .none: .none
+        }
+    }
 }
 
 @MainActor
@@ -175,6 +191,9 @@ final class PlayerService {
 
         configureRemoteCommands()
         restoreState()
+#if DEBUG
+        installUITestFixtureIfNeeded()
+#endif
     }
 
     func play(_ tracks: [Track], source: PlaySource, startingAt track: Track? = nil) {
@@ -636,6 +655,19 @@ final class PlayerService {
         let lyricGeneration = lyricsGeneration
         updateNowPlayingMetadata()
         persistState()
+
+#if DEBUG
+        if Self.usesUITestFixture {
+            recordRecent(track)
+            isLoadingLyrics = false
+            isResolvingURL = false
+            isBuffering = false
+            isPlaying = true
+            persistState()
+            updateNowPlayingMetadata()
+            return
+        }
+#endif
 
         Task { await resolveAndPlay(track, generation: playbackGeneration, startingAt: progress) }
         Task { await loadLyrics(track, generation: lyricGeneration) }
@@ -1172,15 +1204,16 @@ final class PlayerService {
         }
         guard let currentID = state.currentID,
               let index = activeQueue.firstIndex(where: { $0.id == currentID }) else { return }
+        let restoredTrack = activeQueue[index]
         currentIndex = index
-        currentTrack = activeQueue[index]
-        duration = activeQueue[index].duration
+        currentTrack = restoredTrack
+        duration = restoredTrack.duration
         progress = min(max(0, state.progress ?? 0), duration)
         didReachEnd = state.reachedEnd ?? false
         isLoadingLyrics = true
         lyricsErrorMessage = nil
         updateNowPlayingMetadata()
-        Task { await loadLyrics(activeQueue[index], generation: lyricsGeneration) }
+        Task { await loadLyrics(restoredTrack, generation: lyricsGeneration) }
     }
 
     private func recordRecent(_ track: Track) {
@@ -1207,4 +1240,57 @@ final class PlayerService {
         try? FileManager.default.createDirectory(at: support, withIntermediateDirectories: true)
         return support.appendingPathComponent("player-state.json")
     }
+
+#if DEBUG
+    static var usesUITestFixture: Bool {
+        ProcessInfo.processInfo.environment["SONIMBUS_UI_PLAYBACK_FIXTURE"] == "1"
+    }
+
+    static let uiTestTracks: [Track] = [
+        (3417910003, "祈神怜", 165_000),
+        (3420799859, "莫忙", 194_000),
+        (3424349862, "颜如玉 2.0", 221_000),
+        (1974443812, "测试航线四", 208_000),
+        (1901371647, "测试航线五", 183_000),
+        (2137885746, "测试航线六", 201_000),
+        (2049512697, "测试航线七", 176_000),
+        (1985046541, "测试航线八", 232_000),
+    ].enumerated().map { offset, fixture in
+        Track(
+            id: fixture.0,
+            name: fixture.1,
+            artists: [ArtistRef(id: 12_000 + offset, name: "测试歌手 \(offset + 1)")],
+            album: AlbumRef(
+                id: 22_000 + offset,
+                name: "测试专辑 \(offset + 1)",
+                picUrl: nil
+            ),
+            durationMS: fixture.2
+        )
+    }
+
+    private func installUITestFixtureIfNeeded() {
+        guard Self.usesUITestFixture, let first = Self.uiTestTracks.first else { return }
+        resolveGeneration &+= 1
+        lyricsGeneration &+= 1
+        engine.pause()
+        engine.replaceCurrentItem(with: nil)
+        queue = Self.uiTestTracks
+        shuffledQueue = []
+        recentTracks = Self.uiTestTracks
+        currentTrack = first
+        currentIndex = 0
+        source = .recent
+        progress = 0
+        duration = first.duration
+        lyrics = nil
+        isLoadingLyrics = false
+        lyricsErrorMessage = nil
+        isPlaying = false
+        isResolvingURL = false
+        isBuffering = false
+        didReachEnd = false
+        updateNowPlayingMetadata()
+    }
+#endif
 }

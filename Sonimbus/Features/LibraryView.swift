@@ -1,8 +1,6 @@
 import SwiftUI
 
 struct LibraryView: View {
-    @Environment(\.navigationFocusRestorationGeneration) private var focusRestorationGeneration
-    @Environment(\.navigationFocusRestorationRoute) private var focusRestorationRoute
     @Environment(\.rootTabActivationGeneration) private var rootTabActivationGeneration
     @Environment(AccountStore.self) private var account
     @State private var showLogin = false
@@ -10,8 +8,6 @@ struct LibraryView: View {
     @State private var showLogoutConfirmation = false
     @State private var showCreatePlaylist = false
     @State private var playlistPendingDeletion: PlaylistSummary?
-    @State private var lastFocusedRoute: AppRoute?
-    @FocusState private var focusedRoute: AppRoute?
 
     private var otherPlaylists: [PlaylistSummary] {
         guard let likedID = account.likedSongsPlaylist?.id else { return account.playlists }
@@ -33,13 +29,6 @@ struct LibraryView: View {
         }
         .fullScreenCover(isPresented: $showLogin) { LoginView() }
         .fullScreenCover(isPresented: $showCreatePlaylist) { CreatePlaylistView() }
-        .onChange(of: focusedRoute) { _, route in
-            if let route { lastFocusedRoute = route }
-        }
-        .onChange(of: rootTabActivationGeneration) { _, _ in
-            focusedRoute = nil
-            lastFocusedRoute = nil
-        }
         .alert("退出网易云音乐？", isPresented: $showLogoutConfirmation) {
             Button("取消", role: .cancel) {}
             Button("退出登录", role: .destructive) {
@@ -94,11 +83,7 @@ struct LibraryView: View {
                     }
                     .buttonStyle(TVCardButtonStyle(cornerRadius: 32, contentPadding: 0, focusedScale: 1.018))
                     .padding(.horizontal, TVTheme.horizontalPadding)
-                    .focused($focusedRoute, equals: .playlist(liked.id))
                     .id(AppRoute.playlist(liked.id))
-                    .simultaneousGesture(TapGesture().onEnded {
-                        lastFocusedRoute = .playlist(liked.id)
-                    })
                 }
 
                 HStack(spacing: 30) {
@@ -111,9 +96,7 @@ struct LibraryView: View {
                         )
                     }
                     .buttonStyle(TVHeroButtonStyle())
-                    .focused($focusedRoute, equals: .recents)
                     .id(AppRoute.recents)
-                    .simultaneousGesture(TapGesture().onEnded { lastFocusedRoute = .recents })
 
                     NavigationLink(value: AppRoute.cloud) {
                         LibraryShortcutCard(
@@ -124,9 +107,7 @@ struct LibraryView: View {
                         )
                     }
                     .buttonStyle(TVHeroButtonStyle())
-                    .focused($focusedRoute, equals: .cloud)
                     .id(AppRoute.cloud)
-                    .simultaneousGesture(TapGesture().onEnded { lastFocusedRoute = .cloud })
                 }
                 .padding(.horizontal, TVTheme.horizontalPadding)
                 .focusSection()
@@ -135,11 +116,7 @@ struct LibraryView: View {
                     HorizontalShelf(title: "收藏的专辑") {
                         ForEach(account.likedAlbums) { album in
                             AlbumCard(album: album)
-                                .focused($focusedRoute, equals: .album(album.id))
                                 .id(AppRoute.album(album.id))
-                                .simultaneousGesture(TapGesture().onEnded {
-                                    lastFocusedRoute = .album(album.id)
-                                })
                         }
                     }
                 }
@@ -148,11 +125,7 @@ struct LibraryView: View {
                     HorizontalShelf(title: "关注的歌手") {
                         ForEach(account.likedArtists) { artist in
                             ArtistCard(artist: artist)
-                                .focused($focusedRoute, equals: .artist(artist.id))
                                 .id(AppRoute.artist(artist.id))
-                                .simultaneousGesture(TapGesture().onEnded {
-                                    lastFocusedRoute = .artist(artist.id)
-                                })
                         }
                     }
                 }
@@ -171,11 +144,7 @@ struct LibraryView: View {
                     HorizontalShelf(title: "我的歌单", subtitle: "创建与收藏的全部歌单") {
                         ForEach(otherPlaylists) { playlist in
                             PlaylistCard(playlist: playlist)
-                                .focused($focusedRoute, equals: .playlist(playlist.id))
                                 .id(AppRoute.playlist(playlist.id))
-                                .simultaneousGesture(TapGesture().onEnded {
-                                    lastFocusedRoute = .playlist(playlist.id)
-                                })
                                 .contextMenu {
                                     if account.ownsPlaylist(id: playlist.id) {
                                         Button("删除歌单", role: .destructive) {
@@ -192,12 +161,25 @@ struct LibraryView: View {
                 .id(RootContentAnchor.top)
             }
             .background(TVBackground(tint: .indigo))
-            .task(id: focusRestorationGeneration) {
-                await restoreNavigationFocus(using: proxy)
-            }
             .onChange(of: rootTabActivationGeneration) { _, generation in
                 Task { await resetRootPresentation(for: generation, using: proxy) }
             }
+        }
+    }
+
+    @MainActor
+    private func resetRootPresentation(
+        for generation: Int,
+        using proxy: ScrollViewProxy
+    ) async {
+        guard generation > 0 else { return }
+        await Task.yield()
+        guard !Task.isCancelled,
+              generation == rootTabActivationGeneration else { return }
+        var transaction = Transaction()
+        transaction.disablesAnimations = true
+        withTransaction(transaction) {
+            proxy.scrollTo(RootContentAnchor.top, anchor: .top)
         }
     }
 
@@ -231,9 +213,7 @@ struct LibraryView: View {
                 Label("设置", systemImage: "gearshape.fill")
             }
             .buttonStyle(TVPillButtonStyle())
-            .focused($focusedRoute, equals: .settings)
             .id(AppRoute.settings)
-            .simultaneousGesture(TapGesture().onEnded { lastFocusedRoute = .settings })
             Button {
                 Task {
                     isRefreshing = true
@@ -259,36 +239,6 @@ struct LibraryView: View {
         }
         .padding(.horizontal, TVTheme.horizontalPadding)
         .focusSection()
-    }
-
-    @MainActor
-    private func restoreNavigationFocus(using proxy: ScrollViewProxy) async {
-        guard let route = focusRestorationRoute else { return }
-        try? await Task.sleep(for: .milliseconds(80))
-        guard !Task.isCancelled else { return }
-        withAnimation(.easeOut(duration: 0.18)) {
-            proxy.scrollTo(route, anchor: .center)
-        }
-        try? await Task.sleep(for: .milliseconds(140))
-        guard !Task.isCancelled else { return }
-        lastFocusedRoute = route
-        focusedRoute = route
-    }
-
-    @MainActor
-    private func resetRootPresentation(
-        for generation: Int,
-        using proxy: ScrollViewProxy
-    ) async {
-        guard generation > 0 else { return }
-        await Task.yield()
-        guard !Task.isCancelled,
-              generation == rootTabActivationGeneration else { return }
-        var transaction = Transaction()
-        transaction.disablesAnimations = true
-        withTransaction(transaction) {
-            proxy.scrollTo(RootContentAnchor.top, anchor: .top)
-        }
     }
 
     private var loggedOutView: some View {
@@ -459,7 +409,6 @@ private struct LibraryShortcutCard: View {
 struct RecentPlaysView: View {
     private enum HeaderFocus: Hashable {
         case range
-        case playAll
     }
 
     @Environment(\.openNowPlaying) private var openNowPlaying
@@ -473,7 +422,6 @@ struct RecentPlaysView: View {
     @State private var errorMessage: String?
     @State private var loadGeneration = 0
     @FocusState private var focusedHeaderAction: HeaderFocus?
-    @FocusState private var focusedTrackID: AnyHashable?
 
     private var contentKey: ContentStore.PlayRecordsKey? {
         (account.profile?.userId).map {
@@ -490,11 +438,6 @@ struct RecentPlaysView: View {
     private var visibleRecords: [PlayRecordItem] {
         let visibleIDs = Set(player.visibleTracks(records.map(\.song)).map(\.id))
         return records.filter { visibleIDs.contains($0.song.id) }
-    }
-
-    private var initialHeaderFocus: HeaderFocus? {
-        if isLoading && cachedRecords == nil { return nil }
-        return visibleRecords.isEmpty ? .range : .playAll
     }
 
     var body: some View {
@@ -515,17 +458,19 @@ struct RecentPlaysView: View {
                 .pickerStyle(.segmented)
                 .frame(width: 420)
                 .focused($focusedHeaderAction, equals: .range)
-                .prefersDefaultFocus(initialHeaderFocus == .range, in: focusScope)
+                .prefersDefaultFocus(
+                    !isLoading && visibleRecords.isEmpty,
+                    in: focusScope
+                )
                 Button {
                     player.play(visibleRecords.map(\.song), source: .recent)
-                    openNowPlaying?(nil)
+                    openNowPlaying?(.action(.recentHistory, .play))
                 } label: {
                     Label("播放全部", systemImage: "play.fill")
                 }
                 .buttonStyle(TVPillButtonStyle(prominent: true))
+                .playbackOriginFocus(.action(.recentHistory, .play))
                 .disabled(visibleRecords.isEmpty)
-                .focused($focusedHeaderAction, equals: .playAll)
-                .prefersDefaultFocus(initialHeaderFocus == .playAll, in: focusScope)
 
             }
             .padding(.horizontal, TVTheme.horizontalPadding)
@@ -537,10 +482,16 @@ struct RecentPlaysView: View {
         .background(TVBackground(tint: .indigo))
         .tvInitialFocus(
             $focusedHeaderAction,
-            target: initialHeaderFocus,
+            target: !isLoading && visibleRecords.isEmpty ? .range : nil,
             in: focusScope
         )
         .task(id: weekOnly) { await load() }
+        .playbackOriginFocusScope(
+            surfaces: [.recentHistory],
+            defaultFocus: visibleRecords.isEmpty
+                ? nil
+                : .action(.recentHistory, .play)
+        )
     }
 
     @ViewBuilder
@@ -568,7 +519,7 @@ struct RecentPlaysView: View {
                             index: index,
                             tracks: visibleRecords.map(\.song),
                             source: .recent,
-                            focusBinding: $focusedTrackID
+                            originSurface: .recentHistory
                         )
                     }
                 }
@@ -630,7 +581,6 @@ struct CloudMusicView: View {
     @State private var itemPendingDeletion: CloudSongItem?
     @State private var isDeleting = false
     @FocusState private var focusedHeaderAction: HeaderFocus?
-    @FocusState private var focusedTrackID: AnyHashable?
 
     private var contentKey: Int? { account.profile?.userId }
     private var response: NeteaseAPI.CloudResponse? {
@@ -661,11 +611,12 @@ struct CloudMusicView: View {
                 .prefersDefaultFocus(true, in: focusScope)
                 Button {
                     player.play(tracks, source: .cloud)
-                    openNowPlaying?(nil)
+                    openNowPlaying?(.action(.cloud, .play))
                 } label: {
                     Label("播放全部", systemImage: "play.fill")
                 }
                 .buttonStyle(TVPillButtonStyle(prominent: true))
+                .playbackOriginFocus(.action(.cloud, .play))
                 .disabled(tracks.isEmpty)
 
             }
@@ -704,6 +655,7 @@ struct CloudMusicView: View {
         } message: {
             Text("《\(itemPendingDeletion?.songName ?? "这首歌曲")》会从你的网易云音乐云盘中永久删除。")
         }
+        .playbackOriginFocusScope(surfaces: [.cloud])
     }
 
     private var storageDescription: String {
@@ -739,9 +691,9 @@ struct CloudMusicView: View {
                                 index: index,
                                 tracks: tracks,
                                 source: .cloud,
+                                originSurface: .cloud,
                                 cloudMatchAction: { matchingItem = item },
-                                cloudDeleteAction: { itemPendingDeletion = item },
-                                focusBinding: $focusedTrackID
+                                cloudDeleteAction: { itemPendingDeletion = item }
                             )
                         }
                     }

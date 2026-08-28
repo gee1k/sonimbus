@@ -10,15 +10,7 @@ final class SearchSession {
     var resultUsesSongUnlock: Bool?
 }
 
-private enum SearchFocus: Hashable {
-    case suggested
-    case recent(String)
-    case clearRecent
-}
-
 struct SearchView: View {
-    @Environment(\.navigationFocusRestorationGeneration) private var focusRestorationGeneration
-    @Environment(\.navigationFocusRestorationRoute) private var focusRestorationRoute
     @Environment(\.rootTabActivationGeneration) private var rootTabActivationGeneration
     @Environment(PlayerService.self) private var player
 
@@ -31,8 +23,6 @@ struct SearchView: View {
     @State private var suggestedQuery: String?
     @State private var searchGeneration = 0
     @State private var pendingResultFocusID: Int?
-    @State private var lastFocusedResultID: Int?
-    @FocusState private var focusedSearchControl: SearchFocus?
     @FocusState private var focusedResultID: AnyHashable?
 
     private var query: String {
@@ -93,15 +83,8 @@ struct SearchView: View {
             refreshForSongUnlockSettingIfNeeded()
         }
         .task { await loadSuggestedQuery() }
-        .onChange(of: focusedResultID) { _, id in
-            if let id = id?.base as? Int {
-                lastFocusedResultID = id
-            }
-        }
         .onChange(of: rootTabActivationGeneration) { _, _ in
-            focusedSearchControl = nil
             focusedResultID = nil
-            lastFocusedResultID = nil
             pendingResultFocusID = nil
         }
         .onChange(of: query) { _, value in
@@ -120,7 +103,7 @@ struct SearchView: View {
                   !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
             Task { await search() }
         }
-        .task(id: focusRestorationGeneration) { await restoreNavigationFocus() }
+        .playbackOriginFocusScope(surfaces: [.searchResults])
     }
 
     @ViewBuilder
@@ -144,7 +127,7 @@ struct SearchView: View {
                                     index: index,
                                     tracks: tracks,
                                     source: .search,
-                                    focusBinding: $focusedResultID
+                                    originSurface: .searchResults
                                 )
                                     .id(track.id)
                             }
@@ -218,9 +201,6 @@ struct SearchView: View {
                                     card(item)
                                         .id(item.id)
                                         .focused($focusedResultID, equals: AnyHashable(item.id))
-                                        .simultaneousGesture(TapGesture().onEnded {
-                                            lastFocusedResultID = item.id
-                                        })
                                 }
                             }
                             if hasMore { loadMoreButton }
@@ -246,6 +226,22 @@ struct SearchView: View {
             message: "换一个关键词或搜索类型试试。",
             symbol: "magnifyingglass"
         )
+    }
+
+    @MainActor
+    private func resetResultPresentation(
+        for generation: Int,
+        using proxy: ScrollViewProxy
+    ) async {
+        guard generation > 0 else { return }
+        await Task.yield()
+        guard !Task.isCancelled,
+              generation == rootTabActivationGeneration else { return }
+        var transaction = Transaction()
+        transaction.disablesAnimations = true
+        withTransaction(transaction) {
+            proxy.scrollTo(RootContentAnchor.top, anchor: .top)
+        }
     }
 
     private var loadMoreButton: some View {
@@ -285,12 +281,6 @@ struct SearchView: View {
                     Label("试试搜索：\(suggestedQuery)", systemImage: "sparkles")
                 }
                 .buttonStyle(TVPillButtonStyle())
-                .focused($focusedSearchControl, equals: .suggested)
-                .onMoveCommand { direction in
-                    if direction == .down, let first = recentQueries.first {
-                        focusedSearchControl = .recent(first)
-                    }
-                }
             }
             if !recentQueries.isEmpty {
                 VStack(spacing: 16) {
@@ -298,17 +288,6 @@ struct SearchView: View {
                         Text("最近搜索")
                             .font(.headline)
                         Spacer()
-                        Button("清除") {
-                            recentQueries = []
-                            saveRecentQueries()
-                        }
-                        .buttonStyle(TVPillButtonStyle())
-                        .focused($focusedSearchControl, equals: .clearRecent)
-                        .onMoveCommand { direction in
-                            if direction == .up, suggestedQuery != nil {
-                                focusedSearchControl = .suggested
-                            }
-                        }
                     }
                     ScrollView(.horizontal, showsIndicators: false) {
                         LazyHStack(spacing: 14) {
@@ -318,13 +297,12 @@ struct SearchView: View {
                                     Task { await search() }
                                 }
                                 .buttonStyle(TVPillButtonStyle())
-                                .focused($focusedSearchControl, equals: .recent(keyword))
-                                .onMoveCommand { direction in
-                                    if direction == .up, suggestedQuery != nil {
-                                        focusedSearchControl = .suggested
-                                    }
-                                }
                             }
+                            Button("清除") {
+                                recentQueries = []
+                                saveRecentQueries()
+                            }
+                            .buttonStyle(TVPillButtonStyle())
                         }
                         .padding(.horizontal, 14)
                         .padding(.vertical, 12)
@@ -337,36 +315,6 @@ struct SearchView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-    }
-
-    @MainActor
-    private func restoreNavigationFocus() async {
-        let routeID: Int? = switch focusRestorationRoute {
-        case .playlist(let id), .album(let id), .artist(let id), .mv(let id): id
-        default: nil
-        }
-        guard let id = routeID else { return }
-        try? await Task.sleep(for: .milliseconds(80))
-        guard !Task.isCancelled else { return }
-        focusedResultID = nil
-        lastFocusedResultID = id
-        pendingResultFocusID = id
-    }
-
-    @MainActor
-    private func resetResultPresentation(
-        for generation: Int,
-        using proxy: ScrollViewProxy
-    ) async {
-        guard generation > 0 else { return }
-        await Task.yield()
-        guard !Task.isCancelled,
-              generation == rootTabActivationGeneration else { return }
-        var transaction = Transaction()
-        transaction.disablesAnimations = true
-        withTransaction(transaction) {
-            proxy.scrollTo(RootContentAnchor.top, anchor: .top)
-        }
     }
 
     @MainActor
@@ -479,7 +427,9 @@ struct SearchView: View {
             guard generation == searchGeneration,
                   requestedScope == scope,
                   keyword == query.trimmingCharacters(in: .whitespacesAndNewlines) else { return }
-            let firstNewID = firstNewResultID(current, with: next)
+            let firstNewID = requestedScope == .songs
+                ? nil
+                : firstNewResultID(current, with: next)
             focusedResultID = nil
             result = merged(current, with: next)
             if let catalogHasMore { session.songCatalogHasMore = catalogHasMore }
@@ -607,14 +557,23 @@ struct SearchView: View {
     private func focusPendingResult(using proxy: ScrollViewProxy) async {
         guard let id = pendingResultFocusID else { return }
         await Task.yield()
-        proxy.scrollTo(id, anchor: .center)
-        try? await Task.sleep(for: .milliseconds(160))
         guard pendingResultFocusID == id else { return }
-        focusedResultID = AnyHashable(id)
-        pendingResultFocusID = nil
+        var transaction = Transaction()
+        transaction.disablesAnimations = true
+        withTransaction(transaction) {
+            proxy.scrollTo(id, anchor: .center)
+            focusedResultID = AnyHashable(id)
+            pendingResultFocusID = nil
+        }
     }
 
     private func loadRecentQueries() {
+#if DEBUG
+        if ProcessInfo.processInfo.environment["SONIMBUS_UI_SEARCH_FIXTURE"] == "1" {
+            recentQueries = ["林俊杰", "五月天"]
+            return
+        }
+#endif
         guard let data = UserDefaults.standard.data(forKey: "search.recentQueries"),
               let values = try? JSONDecoder().decode([String].self, from: data) else { return }
         recentQueries = values
@@ -623,6 +582,12 @@ struct SearchView: View {
     @MainActor
     private func loadSuggestedQuery() async {
         guard suggestedQuery == nil else { return }
+#if DEBUG
+        if ProcessInfo.processInfo.environment["SONIMBUS_UI_SEARCH_FIXTURE"] == "1" {
+            suggestedQuery = "周杰伦"
+            return
+        }
+#endif
         suggestedQuery = try? await NeteaseAPI.searchDefaultKeyword()
     }
 

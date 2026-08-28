@@ -23,17 +23,12 @@ struct BrowseView: View {
     private let fallbackCategories = ["全部", "华语", "欧美", "日语", "韩语", "粤语", "电子", "摇滚", "民谣", "说唱", "古典", "爵士"]
 
     @Bindable var session: BrowseSession
-
-    @Environment(\.navigationFocusRestorationGeneration) private var focusRestorationGeneration
-    @Environment(\.navigationFocusRestorationRoute) private var focusRestorationRoute
     @Environment(\.rootTabActivationGeneration) private var rootTabActivationGeneration
 
     @State private var isLoading = true
     @State private var errorMessage: String?
     @State private var loadGeneration = 0
     @State private var categories: [String] = []
-    @State private var lastFocusedRoute: AppRoute?
-    @FocusState private var focusedRoute: AppRoute?
 
     private var playlists: [PlaylistSummary] {
         get { session.playlists }
@@ -107,11 +102,7 @@ struct BrowseView: View {
                     HorizontalShelf(title: "编辑精选") {
                         ForEach(playlists) { playlist in
                             PlaylistCard(playlist: playlist, width: 280)
-                                .focused($focusedRoute, equals: .playlist(playlist.id))
                                 .id(AppRoute.playlist(playlist.id))
-                                .simultaneousGesture(TapGesture().onEnded {
-                                    lastFocusedRoute = .playlist(playlist.id)
-                                })
                         }
                     }
                     .id(Section.playlists)
@@ -121,11 +112,7 @@ struct BrowseView: View {
                     HorizontalShelf(title: "排行榜", subtitle: "实时了解大家都在听什么") {
                         ForEach(charts) { chart in
                             ChartCard(chart: chart)
-                                .focused($focusedRoute, equals: .playlist(chart.id))
                                 .id(AppRoute.playlist(chart.id))
-                                .simultaneousGesture(TapGesture().onEnded {
-                                    lastFocusedRoute = .playlist(chart.id)
-                                })
                         }
                     }
                     .id(Section.charts)
@@ -135,11 +122,7 @@ struct BrowseView: View {
                     HorizontalShelf(title: "音乐视频", subtitle: "为大屏精选的网易云 MV") {
                         ForEach(mvs) { mv in
                             MVCard(mv: mv, queue: mvs)
-                                .focused($focusedRoute, equals: .mv(mv.id))
                                 .id(AppRoute.mv(mv.id))
-                                .simultaneousGesture(TapGesture().onEnded {
-                                    lastFocusedRoute = .mv(mv.id)
-                                })
                         }
                     }
                     .id(Section.mvs)
@@ -149,11 +132,7 @@ struct BrowseView: View {
                     HorizontalShelf(title: "新专速递") {
                         ForEach(albums) { album in
                             AlbumCard(album: album)
-                                .focused($focusedRoute, equals: .album(album.id))
                                 .id(AppRoute.album(album.id))
-                                .simultaneousGesture(TapGesture().onEnded {
-                                    lastFocusedRoute = .album(album.id)
-                                })
                         }
                     }
                     .id(Section.albums)
@@ -163,11 +142,7 @@ struct BrowseView: View {
                     HorizontalShelf(title: "热门歌手") {
                         ForEach(artists) { artist in
                             ArtistCard(artist: artist)
-                                .focused($focusedRoute, equals: .artist(artist.id))
                                 .id(AppRoute.artist(artist.id))
-                                .simultaneousGesture(TapGesture().onEnded {
-                                    lastFocusedRoute = .artist(artist.id)
-                                })
                         }
                     }
                     .id(Section.artists)
@@ -187,40 +162,15 @@ struct BrowseView: View {
                 .id(RootContentAnchor.top)
             }
             .background(TVBackground(tint: .blue))
-            .task(id: focusRestorationGeneration) {
-                await restoreNavigationFocus(using: proxy)
-            }
             .onChange(of: rootTabActivationGeneration) { _, generation in
                 Task { await resetRootPresentation(for: generation, using: proxy) }
             }
         }
         .task(id: "\(category)-\(order)") { await load() }
-        .onChange(of: focusedRoute) { _, route in
-            if let route { lastFocusedRoute = route }
-        }
-        .onChange(of: rootTabActivationGeneration) { _, _ in
-            focusedRoute = nil
-            lastFocusedRoute = nil
-        }
     }
 
     private var availableCategories: [String] {
         categories.isEmpty ? fallbackCategories : categories
-    }
-
-    @MainActor
-    private func restoreNavigationFocus(using proxy: ScrollViewProxy) async {
-        guard let route = focusRestorationRoute else { return }
-        focusedRoute = nil
-        try? await Task.sleep(for: .milliseconds(80))
-        guard !Task.isCancelled else { return }
-        withAnimation(.easeOut(duration: 0.18)) {
-            proxy.scrollTo(section(for: route), anchor: .center)
-        }
-        try? await Task.sleep(for: .milliseconds(140))
-        guard !Task.isCancelled else { return }
-        lastFocusedRoute = route
-        focusedRoute = route
     }
 
     @MainActor
@@ -236,21 +186,6 @@ struct BrowseView: View {
         transaction.disablesAnimations = true
         withTransaction(transaction) {
             proxy.scrollTo(RootContentAnchor.top, anchor: .top)
-        }
-    }
-
-    private func section(for route: AppRoute) -> Section {
-        switch route {
-        case .playlist(let id):
-            return charts.contains(where: { $0.id == id }) ? .charts : .playlists
-        case .mv:
-            return .mvs
-        case .album:
-            return .albums
-        case .artist:
-            return .artists
-        default:
-            return .playlists
         }
     }
 

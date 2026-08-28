@@ -135,6 +135,7 @@ struct PlaylistDetailView: View {
                 }
             }
         }
+        .accessibilityIdentifier("playlist-detail-\(playlistID)")
         .background(TVBackground(tint: TVTheme.accent))
         .task(id: detailKey) { await load() }
         .fullScreenCover(isPresented: $showEditor) {
@@ -196,9 +197,27 @@ struct AlbumDetailView: View {
         content.albums.value(for: albumID)
     }
 
+    private var uiTestTracks: [Track]? {
+#if DEBUG
+        PlayerService.usesUITestFixture ? PlayerService.uiTestTracks : nil
+#else
+        nil
+#endif
+    }
+
     var body: some View {
         Group {
-            if let response {
+            if let uiTestTracks {
+                TrackCollectionView(
+                    title: "导航回归测试专辑",
+                    subtitle: "测试歌手",
+                    description: "仅在 UI 自动化测试环境中使用的确定性内容。",
+                    artworkURL: nil,
+                    metadata: "\(uiTestTracks.count) 首歌曲",
+                    tracks: uiTestTracks,
+                    source: .album(albumID)
+                )
+            } else if let response {
                 TrackCollectionView(
                     title: response.album.name,
                     subtitle: response.album.artistNames,
@@ -222,6 +241,7 @@ struct AlbumDetailView: View {
                 }
             }
         }
+        .accessibilityIdentifier("album-detail-\(albumID)")
         .background(TVBackground(tint: .purple))
         .task { await load() }
     }
@@ -230,6 +250,11 @@ struct AlbumDetailView: View {
     private func load() async {
         loadGeneration &+= 1
         let generation = loadGeneration
+        if uiTestTracks != nil {
+            isLoading = false
+            errorMessage = nil
+            return
+        }
         if content.albums.value(for: albumID) != nil {
             isLoading = false
             errorMessage = nil
@@ -297,6 +322,7 @@ struct ArtistDetailView: View {
                 }
             }
         }
+        .accessibilityIdentifier("artist-detail-\(artistID)")
         .background(TVBackground(tint: .blue))
         .task { await load() }
     }
@@ -628,8 +654,6 @@ struct MVDetailView: View {
 
     let mvID: Int
 
-    @Environment(\.dismiss) private var dismiss
-    @Environment(\.handlesNavigationExit) private var handlesNavigationExit
     @Environment(\.scenePhase) private var scenePhase
     @Environment(PlayerService.self) private var audioPlayer
     @Environment(ContentStore.self) private var content
@@ -672,6 +696,7 @@ struct MVDetailView: View {
                 }
             }
         }
+        .accessibilityIdentifier("mv-detail-\(mvID)")
         .background(TVBackground(tint: TVTheme.magenta))
         .tvInitialFocus(
             $focusedInitialControl,
@@ -680,12 +705,6 @@ struct MVDetailView: View {
         )
         .task(id: mvID) { await load() }
         .onAppear { mvPlayback.activate(mvID: mvID) }
-        .modifier(
-            MVExitCommand(isActive: !handlesNavigationExit) {
-                mvPlayback.stop()
-                dismiss()
-            }
-        )
         .onChange(of: scenePhase) { _, phase in
             if phase != .active { mvPlayback.stop() }
         }
@@ -753,6 +772,7 @@ struct MVDetailView: View {
         .buttonStyle(MVVideoStageButtonStyle())
         .focused($focusedInitialControl, equals: .videoStage)
         .prefersDefaultFocus(true, in: focusScope)
+        .accessibilityIdentifier("mv-video-stage-\(detail.id)")
         .accessibilityLabel(videoPlayer == nil ? "播放 \(detail.name) 并进入全屏" : "全屏播放 \(detail.name)")
     }
 
@@ -912,19 +932,11 @@ struct MVDetailView: View {
 }
 
 private struct MVFullscreenPlayer: View {
-    private enum FallbackControl: Hashable {
-        case retry
-        case next
-        case close
-    }
-
     let detail: MVSummary
     let onClose: () -> Void
 
     @Environment(PlayerService.self) private var audioPlayer
     private let mvPlayback = MVPlaybackController.shared
-    @FocusState private var focusedControl: FallbackControl?
-
     private var currentDetail: MVSummary {
         mvPlayback.currentDetail ?? detail
     }
@@ -980,7 +992,6 @@ private struct MVFullscreenPlayer: View {
                                 Label("重试", systemImage: "arrow.clockwise")
                             }
                             .buttonStyle(TVPillButtonStyle(prominent: true))
-                            .focused($focusedControl, equals: .retry)
 
                             if mvPlayback.canSkip {
                                 Button {
@@ -989,14 +1000,12 @@ private struct MVFullscreenPlayer: View {
                                     Label("播放下一支", systemImage: "forward.end.fill")
                                 }
                                 .buttonStyle(TVPillButtonStyle())
-                                .focused($focusedControl, equals: .next)
                             }
 
                             Button(action: onClose) {
                                 Text("返回详情")
                             }
                             .buttonStyle(TVPillButtonStyle())
-                            .focused($focusedControl, equals: .close)
                         }
                         .padding(.top, 10)
                     }
@@ -1007,7 +1016,6 @@ private struct MVFullscreenPlayer: View {
             }
         }
         .ignoresSafeArea()
-        .onAppear { focusedControl = .retry }
         .onExitCommand(perform: onClose)
     }
 }
@@ -1133,20 +1141,6 @@ private struct MVPlayPauseCommand: ViewModifier {
     }
 }
 
-private struct MVExitCommand: ViewModifier {
-    let isActive: Bool
-    let action: () -> Void
-
-    @ViewBuilder
-    func body(content: Content) -> some View {
-        if isActive {
-            content.onExitCommand(perform: action)
-        } else {
-            content
-        }
-    }
-}
-
 private final class InlineMVPlayerView: UIView {
     override static var layerClass: AnyClass { AVPlayerLayer.self }
 
@@ -1176,14 +1170,7 @@ private struct InlineMVPlayer: UIViewRepresentable {
 }
 
 private struct TrackCollectionView: View {
-    private enum HeaderFocus: Hashable {
-        case play
-    }
-
     @Environment(\.openNowPlaying) private var openNowPlaying
-    @Environment(\.navigationFocusRestorationGeneration) private var focusRestorationGeneration
-    @Environment(\.navigationFocusRestorationRoute) private var focusRestorationRoute
-    @Namespace private var focusScope
     let title: String
     let subtitle: String?
     let description: String?
@@ -1204,16 +1191,13 @@ private struct TrackCollectionView: View {
 
     @Environment(PlayerService.self) private var player
     @Environment(AccountStore.self) private var account
-    @State private var lastFocusedRoute: AppRoute?
-    @FocusState private var focusedHeaderAction: HeaderFocus?
-    @FocusState private var focusedRoute: AppRoute?
-    @FocusState private var focusedTrackID: AnyHashable?
 
     private var visibleTracks: [Track] {
         player.visibleTracks(tracks)
     }
 
     var body: some View {
+        let originSurface = PlaybackOriginSurface.collection(source.playbackCollectionOrigin)
         ScrollView {
             LazyVStack(spacing: 32) {
                 HStack(alignment: .bottom, spacing: 42) {
@@ -1251,22 +1235,22 @@ private struct TrackCollectionView: View {
                         HStack(spacing: 18) {
                             Button {
                                 player.play(visibleTracks, source: source)
-                                openNowPlaying?(nil)
+                                openNowPlaying?(.action(originSurface, .play))
                             } label: {
                                 Label("播放", systemImage: "play.fill")
                             }
                             .buttonStyle(TVPillButtonStyle(prominent: true))
+                            .playbackOriginFocus(.action(originSurface, .play))
                             .disabled(visibleTracks.isEmpty)
-                            .focused($focusedHeaderAction, equals: .play)
-                            .prefersDefaultFocus(true, in: focusScope)
 
                             Button {
                                 player.playShuffled(visibleTracks, source: source)
-                                openNowPlaying?(nil)
+                                openNowPlaying?(.action(originSurface, .shuffle))
                             } label: {
                                 Label("随机播放", systemImage: "shuffle")
                             }
                             .buttonStyle(TVPillButtonStyle())
+                            .playbackOriginFocus(.action(originSurface, .shuffle))
                             .disabled(visibleTracks.isEmpty)
 
                             if let playlistID = source.playlistID,
@@ -1274,12 +1258,13 @@ private struct TrackCollectionView: View {
                                let first = visibleTracks.first(where: { !$0.noCopyright }) {
                                 Button {
                                     player.startIntelligence(from: first, playlistID: playlistID) {
-                                        openNowPlaying?(nil)
+                                        openNowPlaying?(.action(originSurface, .intelligence))
                                     }
                                 } label: {
                                     Label("心动模式", systemImage: "heart.fill")
                                 }
                                 .buttonStyle(TVPillButtonStyle())
+                                .playbackOriginFocus(.action(originSurface, .intelligence))
                             }
 
                             if let collectionActionTitle, let collectionAction {
@@ -1322,7 +1307,7 @@ private struct TrackCollectionView: View {
                                 index: index,
                                 tracks: visibleTracks,
                                 source: source,
-                                focusBinding: $focusedTrackID
+                                originSurface: originSurface
                             )
                         }
                     }
@@ -1335,10 +1320,6 @@ private struct TrackCollectionView: View {
                     HorizontalShelf(title: "专辑", subtitle: "完整作品目录") {
                         ForEach(relatedAlbums) { album in
                             AlbumCard(album: album)
-                                .focused($focusedRoute, equals: .album(album.id))
-                                .simultaneousGesture(TapGesture().onEnded {
-                                    lastFocusedRoute = .album(album.id)
-                                })
                         }
                     }
                 }
@@ -1347,10 +1328,6 @@ private struct TrackCollectionView: View {
                     HorizontalShelf(title: "音乐视频", subtitle: "来自这位歌手的 MV") {
                         ForEach(relatedMVs) { mv in
                             MVCard(mv: mv, queue: relatedMVs)
-                                .focused($focusedRoute, equals: .mv(mv.id))
-                                .simultaneousGesture(TapGesture().onEnded {
-                                    lastFocusedRoute = .mv(mv.id)
-                                })
                         }
                     }
                 }
@@ -1359,32 +1336,14 @@ private struct TrackCollectionView: View {
                     HorizontalShelf(title: "相似歌手") {
                         ForEach(relatedArtists) { artist in
                             ArtistCard(artist: artist)
-                                .focused($focusedRoute, equals: .artist(artist.id))
-                                .simultaneousGesture(TapGesture().onEnded {
-                                    lastFocusedRoute = .artist(artist.id)
-                                })
                         }
                     }
                 }
             }
         }
-        .tvInitialFocus(
-            $focusedHeaderAction,
-            target: visibleTracks.isEmpty ? nil : .play,
-            in: focusScope
+        .playbackOriginFocusScope(
+            surfaces: [originSurface],
+            defaultFocus: .action(originSurface, .play)
         )
-        .onChange(of: focusedRoute) { _, route in
-            if let route { lastFocusedRoute = route }
-        }
-        .task(id: focusRestorationGeneration) { await restoreNavigationFocus() }
-    }
-
-    @MainActor
-    private func restoreNavigationFocus() async {
-        guard let route = focusRestorationRoute ?? lastFocusedRoute else { return }
-        try? await Task.sleep(for: .milliseconds(140))
-        guard !Task.isCancelled else { return }
-        lastFocusedRoute = route
-        focusedRoute = route
     }
 }

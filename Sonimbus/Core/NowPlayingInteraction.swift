@@ -23,32 +23,95 @@ enum NowPlayingPresentationSource: Equatable {
 struct RootTabPresentationState<Route: Hashable> {
     var path: [Route] = []
     private(set) var rootActivationGeneration = 0
-    private(set) var navigationFocusRestorationGeneration = 0
-    private(set) var navigationFocusRestorationRoute: Route?
-    private(set) var trackFocusRestorationGeneration = 0
-    private(set) var trackFocusRestorationID: AnyHashable?
 
     mutating func resetToRoot() {
         path.removeAll()
         rootActivationGeneration &+= 1
-        navigationFocusRestorationRoute = nil
-        navigationFocusRestorationGeneration &+= 1
-        trackFocusRestorationID = nil
-        trackFocusRestorationGeneration &+= 1
+    }
+}
+
+struct NavigationReturnContext<Tab: Hashable, Route: Hashable, Focus: Hashable>: Equatable {
+    let tab: Tab
+    let parentPath: [Route]
+    let focus: Focus
+
+    func matches(tab: Tab, parentPath: [Route]) -> Bool {
+        self.tab == tab && self.parentPath == parentPath
     }
 
-    mutating func requestNavigationFocusRestoration(_ route: Route) {
-        navigationFocusRestorationRoute = route
-        navigationFocusRestorationGeneration &+= 1
-        trackFocusRestorationID = nil
-        trackFocusRestorationGeneration &+= 1
+    func shouldDiscard(when tab: Tab, popsToDepth depth: Int) -> Bool {
+        self.tab == tab && parentPath.count >= depth
     }
+}
 
-    mutating func requestTrackFocusRestoration(_ trackID: AnyHashable?) {
-        trackFocusRestorationID = trackID
-        trackFocusRestorationGeneration &+= 1
-        navigationFocusRestorationRoute = nil
-        navigationFocusRestorationGeneration &+= 1
+enum PlaybackOriginAction: Hashable {
+    case play
+    case shuffle
+    case intelligence
+}
+
+enum PlaybackCollectionOrigin: Hashable {
+    case playlist(Int)
+    case intelligence(Int)
+    case album(Int)
+    case artist(Int)
+    case daily
+    case newSongs
+    case recent
+    case cloud
+    case search
+    case personalFM
+    case none
+}
+
+enum PlaybackOriginSurface: Hashable {
+    case collection(PlaybackCollectionOrigin)
+    case homeRecent
+    case homeNewSongs
+    case homePersonalFM
+    case searchResults
+    case recentHistory
+    case cloud
+
+    var accessibilityID: String {
+        switch self {
+        case .collection(let origin): "collection-\(origin.accessibilityID)"
+        case .homeRecent: "home-recent"
+        case .homeNewSongs: "home-new-songs"
+        case .homePersonalFM: "home-personal-fm"
+        case .searchResults: "search-results"
+        case .recentHistory: "recent-history"
+        case .cloud: "cloud"
+        }
+    }
+}
+
+private extension PlaybackCollectionOrigin {
+    var accessibilityID: String {
+        switch self {
+        case .playlist(let id): "playlist-\(id)"
+        case .intelligence(let id): "intelligence-\(id)"
+        case .album(let id): "album-\(id)"
+        case .artist(let id): "artist-\(id)"
+        case .daily: "daily"
+        case .newSongs: "new-songs"
+        case .recent: "recent"
+        case .cloud: "cloud"
+        case .search: "search"
+        case .personalFM: "personal-fm"
+        case .none: "none"
+        }
+    }
+}
+
+enum PlaybackOriginFocus: Hashable {
+    case track(PlaybackOriginSurface, trackID: Int, occurrence: Int)
+    case action(PlaybackOriginSurface, PlaybackOriginAction)
+
+    var surface: PlaybackOriginSurface {
+        switch self {
+        case .track(let surface, _, _), .action(let surface, _): surface
+        }
     }
 }
 
@@ -57,14 +120,17 @@ struct NowPlayingPresentationState: Equatable {
 
     var isPresented: Bool { source != nil }
 
-    mutating func present(from source: NowPlayingPresentationSource) {
-        guard self.source == nil else { return }
+    @discardableResult
+    mutating func present(from source: NowPlayingPresentationSource) -> Bool {
+        guard self.source == nil else { return false }
         self.source = source
+        return true
     }
 
     mutating func dismiss() -> NowPlayingPresentationSource? {
-        defer { source = nil }
-        return source
+        let dismissedSource = source
+        source = nil
+        return dismissedSource
     }
 }
 
