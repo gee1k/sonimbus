@@ -36,6 +36,7 @@ struct HomeView: View {
                             )
                         }
                     }
+                    .id(PlaybackOriginSurface.homeRecent)
                 }
 
                 if !visibleNewSongs.isEmpty {
@@ -54,6 +55,7 @@ struct HomeView: View {
                             )
                         }
                     }
+                    .id(PlaybackOriginSurface.homeNewSongs)
                 }
 
                 if !playlists.isEmpty {

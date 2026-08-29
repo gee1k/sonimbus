@@ -67,6 +67,29 @@ final class NavigationRegressionUITests: XCTestCase {
         XCTAssertFalse(recommendations.hasFocus)
     }
 
+    func testNewSongsReturnRestoresExactCardAfterRecentShelfReorder() throws {
+        let app = launchFixture(duplicatesAcrossShelves: true)
+        let trackID = homeTrackIDs[2]
+        let recent = app.buttons[homeCardID(surface: "home-recent", trackID: trackID)]
+            .firstMatch
+        let recommendation = app.buttons[
+            homeCardID(surface: "home-new-songs", trackID: trackID)
+        ].firstMatch
+
+        XCTAssertTrue(recent.waitForExistence(timeout: 8))
+        XCTAssertTrue(focus(recent, in: app, timeout: 8))
+        XCUIRemote.shared.press(.down)
+        XCTAssertTrue(recommendation.waitForExistence(timeout: 5))
+        XCTAssertTrue(waitForFocus(recommendation, timeout: 5))
+
+        XCUIRemote.shared.press(.select)
+        XCTAssertTrue(nowPlayingPage(in: app).waitForExistence(timeout: 5))
+        dismissNowPlaying(in: app)
+
+        XCTAssertTrue(recommendation.waitForExistence(timeout: 5))
+        XCTAssertTrue(waitForFocus(recommendation, timeout: 5))
+    }
+
     func testAlbumOpenedFromNowPlayingUnwindsToAlbumThenOriginalHomeCard() throws {
         let app = launchFixture()
         let homeTrackID = homeTrackIDs[2]

@@ -689,6 +689,11 @@ private struct PlaybackOriginFocusScopeModifier: ViewModifier {
                     var transaction = Transaction()
                     transaction.disablesAnimations = true
                     withTransaction(transaction) {
+                        proxy.scrollTo(request.origin.surface, anchor: .center)
+                    }
+                    await nextMainRunLoop()
+                    guard !Task.isCancelled else { return }
+                    withTransaction(transaction) {
                         proxy.scrollTo(request.origin, anchor: .center)
                     }
                     await nextMainRunLoop()
