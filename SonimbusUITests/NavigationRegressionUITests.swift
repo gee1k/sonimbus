@@ -12,6 +12,19 @@ final class NavigationRegressionUITests: XCTestCase {
         continueAfterFailure = false
     }
 
+    override func tearDownWithError() throws {
+        guard testRun?.failureCount ?? 0 > 0 else { return }
+        let app = XCUIApplication()
+        let screenshot = XCTAttachment(screenshot: app.screenshot())
+        screenshot.name = "player-interaction-failure"
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
+        let hierarchy = XCTAttachment(string: app.debugDescription)
+        hierarchy.name = "player-interaction-hierarchy"
+        hierarchy.lifetime = .keepAlways
+        add(hierarchy)
+    }
+
     func testRecentShelfReorderKeepsUniqueCardsAndRestoresExactSource() throws {
         let app = launchFixture()
         let sourceID = homeCardID(surface: "home-recent", trackID: homeTrackIDs[3])
@@ -90,7 +103,7 @@ final class NavigationRegressionUITests: XCTestCase {
         XCTAssertTrue(waitForFocus(recommendation, timeout: 5))
     }
 
-    func testAlbumOpenedFromNowPlayingUnwindsToAlbumThenOriginalHomeCard() throws {
+    func testAlbumOpenedFromNowPlayingUnwindsToNowPlayingThenOriginalHomeCard() throws {
         let app = launchFixture()
         let homeTrackID = homeTrackIDs[2]
         let sourceID = homeCardID(surface: "home-recent", trackID: homeTrackID)
@@ -103,7 +116,8 @@ final class NavigationRegressionUITests: XCTestCase {
 
         let info = app.buttons["查看歌曲信息"].firstMatch
         XCTAssertTrue(info.waitForExistence(timeout: 4))
-        XCTAssertTrue(focus(info, in: app, timeout: 5))
+        // The more-actions Menu between transport and info hides its focus from XCUI.
+        XCTAssertTrue(pressUntilFocused(info, direction: .left, attempts: 10))
         XCUIRemote.shared.press(.select)
 
         let albumAction = app.buttons["前往专辑"].firstMatch
@@ -142,6 +156,11 @@ final class NavigationRegressionUITests: XCTestCase {
         XCTAssertFalse(source.exists)
 
         XCUIRemote.shared.press(.menu)
+        XCTAssertTrue(
+            nowPlayingPage(in: app).waitForExistence(timeout: 5),
+            "从播放页进入的专辑返回时应回到播放页"
+        )
+        dismissNowPlaying(in: app)
         XCTAssertTrue(source.waitForExistence(timeout: 5))
         XCTAssertTrue(waitForFocus(source, timeout: 5))
         XCTAssertFalse(albumPage.exists)
@@ -307,13 +326,170 @@ final class NavigationRegressionUITests: XCTestCase {
         XCTAssertEqual(focusedButton(in: app).label, browse.label)
     }
 
+    func testLargePlaylistRespondsAndRestoresScrolledRow() {
+        let app = XCUIApplication()
+        app.launchEnvironment["SONIMBUS_UI_PLAYBACK_FIXTURE"] = "1"
+        app.launchEnvironment["SONIMBUS_UI_LARGE_PLAYLIST"] = "1"
+        app.launch()
+        let first = app.buttons["track-row-collection-playlist-9000000-9000001-0"].firstMatch
+        XCTAssertTrue(first.waitForExistence(timeout: 10))
+        let play = app.buttons["播放"].firstMatch
+        XCTAssertTrue(focus(play, in: app, timeout: 5))
+        XCUIRemote.shared.press(.down)
+        XCTAssertTrue(waitForFocus(first, timeout: 3), "进入 3000 首歌的列表不应阻塞主线程")
+        for _ in 0..<35 { XCUIRemote.shared.press(.down) }
+        let row = app.buttons["track-row-collection-playlist-9000000-9000036-0"].firstMatch
+        XCTAssertTrue(waitForFocus(row, timeout: 3))
+        XCUIRemote.shared.press(.select)
+        XCTAssertTrue(nowPlayingPage(in: app).waitForExistence(timeout: 5))
+        dismissNowPlaying(in: app)
+        XCTAssertTrue(waitForFocus(row, timeout: 5), "返回时应恢复选中的歌曲")
+        XCUIRemote.shared.press(.down)
+        let next = app.buttons["track-row-collection-playlist-9000000-9000037-0"].firstMatch
+        XCTAssertTrue(waitForFocus(next, timeout: 3))
+        // The last page must remain reachable without creating thousands of focus regions.
+        for _ in 0..<37 { XCUIRemote.shared.press(.up) }
+        XCTAssertTrue(focus(play, in: app, timeout: 5))
+        // SwiftUI Menu's outer accessibility button does not expose the native
+        // menu control's focus. Verify the menu opens using the remote instead.
+        XCUIRemote.shared.press(.right)
+        XCUIRemote.shared.press(.right)
+        XCUIRemote.shared.press(.select)
+        XCTAssertTrue(app.otherElements["第 1 页 · 1–500 首"].firstMatch.waitForExistence(timeout: 3))
+        for _ in 0..<5 { XCUIRemote.shared.press(.down) }
+        XCUIRemote.shared.press(.select)
+        let lastPageFirst = app.buttons["track-row-collection-playlist-9000000-9002501-0"].firstMatch
+        XCTAssertTrue(lastPageFirst.waitForExistence(timeout: 5))
+        XCTAssertFalse(first.exists)
+    }
+
+    func testLargePlaybackQueueMovesContinuouslyAndKeepsSelectedTrackFocused() {
+        let app = XCUIApplication()
+        app.launchEnvironment["SONIMBUS_UI_PLAYBACK_FIXTURE"] = "1"
+        app.launchEnvironment["SONIMBUS_UI_LARGE_PLAYLIST"] = "1"
+        app.launch()
+        let play = app.buttons["播放"].firstMatch
+        XCTAssertTrue(play.waitForExistence(timeout: 10))
+        XCTAssertTrue(focus(play, in: app, timeout: 6))
+        XCUIRemote.shared.press(.select)
+        XCTAssertTrue(nowPlayingPage(in: app).waitForExistence(timeout: 5))
+        let queue = app.buttons["显示播放队列"].firstMatch
+        XCTAssertTrue(focus(queue, in: app, timeout: 6))
+        XCUIRemote.shared.press(.select)
+        let first = app.descendants(matching: .any)["queue-track-9000001"].firstMatch
+        XCTAssertTrue(first.waitForExistence(timeout: 5))
+        XCTAssertTrue(waitForFocus(first, timeout: 3))
+        for _ in 0..<30 { XCUIRemote.shared.press(.right) }
+        let selected = app.descendants(matching: .any)["queue-track-9000031"].firstMatch
+        XCTAssertTrue(waitForFocus(selected, timeout: 3), "3000 首队列连续移动不应阻塞焦点")
+        let queueScreenshot = XCTAttachment(screenshot: app.screenshot())
+        queueScreenshot.name = "large-playback-queue"
+        queueScreenshot.lifetime = .keepAlways
+        add(queueScreenshot)
+        XCUIRemote.shared.press(.select)
+        XCTAssertTrue(waitForFocus(selected, timeout: 3), "播放选中歌曲后焦点应停在该卡片")
+        XCUIRemote.shared.press(.right)
+        XCTAssertTrue(waitForFocus(app.descendants(matching: .any)["queue-track-9000032"].firstMatch, timeout: 3))
+        XCUIRemote.shared.press(.left)
+        XCTAssertTrue(waitForFocus(selected, timeout: 3))
+        XCUIRemote.shared.press(.menu)
+        // Inspect the restored focus immediately, before the six-second idle
+        // timer hides controls while XCTest snapshots the large source list.
+        XCTAssertTrue(waitForFocus(queue, timeout: 3))
+        XCUIRemote.shared.press(.select)
+        XCTAssertTrue(waitForFocus(selected, timeout: 3), "重新进入队列应直接到达正在播放的歌曲")
+    }
+
+    func testIntelligenceTogglesWithoutChangingTrackOrLosingFocus() {
+        let app = launchFixture(playerActions: true)
+        let source = app.buttons[homeCardID(surface: "home-recent", trackID: homeTrackIDs[1])].firstMatch
+        XCTAssertTrue(focus(source, in: app, timeout: 8))
+        XCUIRemote.shared.press(.select)
+        XCTAssertTrue(nowPlayingPage(in: app).waitForExistence(timeout: 5))
+        let title = app.staticTexts["now-playing-track-title"].firstMatch
+        let originalTitle = title.label
+        let start = app.buttons["从这首开启心动模式"].firstMatch
+        XCTAssertTrue(focus(start, in: app, timeout: 6))
+        XCUIRemote.shared.press(.select)
+        let stop = app.buttons["退出心动模式"].firstMatch
+        XCTAssertTrue(stop.waitForExistence(timeout: 4))
+        XCTAssertTrue(waitForFocus(stop, timeout: 2))
+        XCTAssertEqual(title.label, originalTitle)
+        XCUIRemote.shared.press(.select)
+        XCTAssertTrue(start.waitForExistence(timeout: 2), "退出不应等待网络加载整个歌单")
+        XCTAssertTrue(waitForFocus(start, timeout: 2))
+        XCTAssertEqual(title.label, originalTitle)
+        let next = app.buttons["下一首"].firstMatch
+        XCTAssertTrue(focus(next, in: app, timeout: 6))
+        XCUIRemote.shared.press(.select)
+        XCTAssertTrue(waitUntil(timeout: 3) { title.label == "颜如玉 2.0" }, "退出后应恢复进入前的播放顺序")
+        XCTAssertTrue(waitForFocus(next, timeout: 2))
+    }
+
+    func testAddToPlaylistOpensWithRightAndReturnsWithLeft() {
+        let app = launchFixture(playerActions: true)
+        let source = app.buttons[homeCardID(surface: "home-recent", trackID: homeTrackIDs[0])].firstMatch
+        XCTAssertTrue(focus(source, in: app, timeout: 8))
+        XCUIRemote.shared.press(.select)
+        let more = app.buttons["更多操作"].firstMatch
+        XCTAssertTrue(more.waitForExistence(timeout: 5))
+        XCTAssertTrue(focus(more, in: app, timeout: 6))
+        XCUIRemote.shared.press(.select)
+        let add = app.buttons["player-menu-add-playlist"].firstMatch
+        XCTAssertTrue(add.waitForExistence(timeout: 4))
+        XCTAssertTrue(focus(add, in: app, timeout: 5))
+        XCUIRemote.shared.press(.right)
+        let playlist = app.buttons["player-menu-playlist-71002"].firstMatch
+        XCTAssertTrue(playlist.waitForExistence(timeout: 3))
+        XCTAssertTrue(waitForFocus(playlist, timeout: 3))
+        let menuScreenshot = XCTAttachment(screenshot: app.screenshot())
+        menuScreenshot.name = "add-to-playlist-menu"
+        menuScreenshot.lifetime = .keepAlways
+        self.add(menuScreenshot)
+        XCUIRemote.shared.press(.left)
+        XCTAssertTrue(waitForFocus(add, timeout: 3))
+        XCUIRemote.shared.press(.select)
+        XCTAssertTrue(waitForFocus(playlist, timeout: 3), "确认键也应能打开子菜单")
+        XCUIRemote.shared.press(.menu)
+        XCTAssertTrue(waitForFocus(add, timeout: 3))
+        XCUIRemote.shared.press(.menu)
+        XCTAssertTrue(waitForFocus(more, timeout: 3))
+    }
+
+    func testImmersiveLongPressSkipsOnceWithoutShowingControls() {
+        let app = launchFixture()
+        let source = app.buttons[homeCardID(surface: "home-recent", trackID: homeTrackIDs[1])].firstMatch
+        XCTAssertTrue(focus(source, in: app, timeout: 8))
+        XCUIRemote.shared.press(.select)
+        XCTAssertTrue(nowPlayingPage(in: app).waitForExistence(timeout: 5))
+        let title = app.staticTexts["now-playing-track-title"].firstMatch
+        let originalTitle = title.label
+        XCUIRemote.shared.press(.menu)
+        let immersive = app.descendants(matching: .any)["immersive-playback-control"].firstMatch
+        XCTAssertTrue(immersive.waitForExistence(timeout: 3))
+        XCTAssertTrue(waitForFocus(immersive, timeout: 3))
+        XCUIRemote.shared.press(.right, forDuration: 0.9)
+        XCTAssertTrue(waitUntil(timeout: 3) { title.label == "颜如玉 2.0" })
+        XCTAssertTrue(waitForFocus(immersive, timeout: 2))
+        XCTAssertFalse(app.buttons["查看歌曲信息"].firstMatch.isEnabled)
+        XCUIRemote.shared.press(.left, forDuration: 0.9)
+        XCTAssertTrue(waitUntil(timeout: 3) { title.label == originalTitle })
+        XCTAssertTrue(waitForFocus(immersive, timeout: 2))
+        XCUIRemote.shared.press(.select)
+        XCTAssertTrue(waitForFocus(app.buttons["暂停"].firstMatch, timeout: 3))
+        XCUIRemote.shared.press(.select)
+        XCTAssertTrue(waitForFocus(app.buttons["播放"].firstMatch, timeout: 3), "唤回控制栏后的第一次确认应直接暂停")
+    }
+
     private func launchFixture(
         duplicatesAcrossShelves: Bool = false,
-        searchFixture: Bool = false
+        searchFixture: Bool = false,
+        playerActions: Bool = false
     ) -> XCUIApplication {
         let app = XCUIApplication()
         app.launchArguments = ["-ApplePersistenceIgnoreState", "YES"]
         app.launchEnvironment["SONIMBUS_UI_PLAYBACK_FIXTURE"] = "1"
+        if playerActions { app.launchEnvironment["SONIMBUS_UI_PLAYER_ACTIONS"] = "1" }
         if duplicatesAcrossShelves {
             app.launchEnvironment["SONIMBUS_UI_DUPLICATE_TRACK"] = "1"
         }

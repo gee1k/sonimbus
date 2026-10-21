@@ -8,7 +8,8 @@ print_usage() {
   print "  --team-id TeamID               Apple Developer Team ID（必填）"
   print "  --build-number Build           覆盖工程中的 Build Number"
   print "  --signing automatic|manual     签名模式，默认为 automatic"
-  print "  --profile Profile名称          手动签名使用的 Profile；省略时自动查找"
+  print "  --profile Profile名称          主应用手动签名 Profile；省略时自动查找"
+  print "  --top-shelf-profile Profile名称 Top Shelf 手动签名 Profile；省略时自动查找"
   print "  --certificate 证书名称         手动签名使用的证书；省略时自动查找"
   print "  --no-upload                    只归档并导出 IPA，不上传 App Store Connect"
 }
@@ -17,6 +18,7 @@ TEAM_ID=""
 BUILD_NUMBER_OVERRIDE=""
 SIGNING_STYLE="automatic"
 PROVISIONING_PROFILE_SPECIFIER=""
+TOP_SHELF_PROFILE_SPECIFIER=""
 DISTRIBUTION_SIGNING_CERTIFICATE=""
 SHOULD_UPLOAD=1
 
@@ -52,6 +54,14 @@ while (( $# > 0 )); do
         exit 2
       fi
       PROVISIONING_PROFILE_SPECIFIER=$2
+      shift 2
+      ;;
+    --top-shelf-profile)
+      if (( $# < 2 )); then
+        print -u2 -- "--top-shelf-profile 需要 Profile 名称参数。"
+        exit 2
+      fi
+      TOP_SHELF_PROFILE_SPECIFIER=$2
       shift 2
       ;;
     --certificate)
@@ -92,8 +102,8 @@ if [[ "$SIGNING_STYLE" != "automatic" && "$SIGNING_STYLE" != "manual" ]]; then
 fi
 
 if [[ "$SIGNING_STYLE" == "automatic" && \
-  ( -n "$PROVISIONING_PROFILE_SPECIFIER" || -n "$DISTRIBUTION_SIGNING_CERTIFICATE" ) ]]; then
-  print -u2 -- "--profile 和 --certificate 只适用于 --signing manual。"
+  ( -n "$PROVISIONING_PROFILE_SPECIFIER" || -n "$TOP_SHELF_PROFILE_SPECIFIER" || -n "$DISTRIBUTION_SIGNING_CERTIFICATE" ) ]]; then
+  print -u2 -- "--profile、--top-shelf-profile 和 --certificate 只适用于 --signing manual。"
   exit 2
 fi
 
@@ -103,6 +113,8 @@ PROJECT_PATH="$PROJECT_DIR/Sonimbus.xcodeproj"
 EXPORT_OPTIONS_TEMPLATE="$SCRIPT_DIR/TestFlightExportOptions.plist"
 BUNDLE_ID="com.svend.sonimbus"
 BUNDLE_ID_KEY=${BUNDLE_ID//./\\.}
+TOP_SHELF_BUNDLE_ID="$BUNDLE_ID.TopShelf"
+TOP_SHELF_BUNDLE_ID_KEY=${TOP_SHELF_BUNDLE_ID//./\\.}
 
 read -r MARKETING_VERSION PROJECT_BUILD_NUMBER < <("$SCRIPT_DIR/project-version.sh")
 BUILD_NUMBER=${BUILD_NUMBER_OVERRIDE:-$PROJECT_BUILD_NUMBER}
@@ -120,6 +132,7 @@ if [[ ! -f "$EXPORT_OPTIONS_TEMPLATE" ]]; then
 fi
 
 find_matching_distribution_profile() {
+  local target_bundle_id=$1
   local directory candidate profile_xml profile_team application_identifier
   local profile_name expiration expiration_epoch beta_reports_active
   local now_epoch selected_name selected_expiration_epoch
@@ -137,7 +150,7 @@ find_matching_distribution_profile() {
     [[ -d "$directory" ]] || continue
 
     for candidate in "$directory"/*.mobileprovision(N); do
-      grep -a -q -F "$BUNDLE_ID" "$candidate" || continue
+      grep -a -q -F "$target_bundle_id" "$candidate" || continue
       profile_xml=$(security cms -D -i "$candidate" 2>/dev/null) || continue
 
       profile_team=$(print -r -- "$profile_xml" | \
@@ -146,7 +159,7 @@ find_matching_distribution_profile() {
 
       application_identifier=$(print -r -- "$profile_xml" | \
         plutil -extract Entitlements.application-identifier raw -o - - 2>/dev/null) || continue
-      [[ "$application_identifier" == "$TEAM_ID.$BUNDLE_ID" ]] || continue
+      [[ "$application_identifier" == "$TEAM_ID.$target_bundle_id" ]] || continue
 
       beta_reports_active=$(print -r -- "$profile_xml" | \
         plutil -extract Entitlements.beta-reports-active raw -o - - 2>/dev/null) || continue
@@ -198,7 +211,7 @@ if [[ "$SIGNING_STYLE" == "manual" ]]; then
   fi
 
   if [[ -z "$PROVISIONING_PROFILE_SPECIFIER" ]]; then
-    if ! PROVISIONING_PROFILE_SPECIFIER=$(find_matching_distribution_profile); then
+    if ! PROVISIONING_PROFILE_SPECIFIER=$(find_matching_distribution_profile "$BUNDLE_ID"); then
       print -u2 "未找到 Team $TEAM_ID 与 $BUNDLE_ID 匹配的未过期 App Store Profile。"
       print -u2 "请安装 Profile，或通过 --profile 显式指定。"
       exit 5
@@ -206,10 +219,19 @@ if [[ "$SIGNING_STYLE" == "manual" ]]; then
     print "手动签名：已自动选择匹配的 Profile。"
   fi
 
+  if [[ -z "$TOP_SHELF_PROFILE_SPECIFIER" ]]; then
+    if ! TOP_SHELF_PROFILE_SPECIFIER=$(find_matching_distribution_profile "$TOP_SHELF_BUNDLE_ID"); then
+      print -u2 "未找到 Team $TEAM_ID 与 $TOP_SHELF_BUNDLE_ID 匹配的未过期 App Store Profile。"
+      print -u2 "请安装扩展的 Profile，或通过 --top-shelf-profile 显式指定。"
+      exit 5
+    fi
+  fi
+
   ARCHIVE_SIGNING_ARGUMENTS=(
     "CODE_SIGN_STYLE=$XCODE_SIGNING_STYLE"
     "CODE_SIGN_IDENTITY=$DISTRIBUTION_SIGNING_CERTIFICATE"
-    "PROVISIONING_PROFILE_SPECIFIER=$PROVISIONING_PROFILE_SPECIFIER"
+    "SONIMBUS_APP_PROFILE=$PROVISIONING_PROFILE_SPECIFIER"
+    "SONIMBUS_TOP_SHELF_PROFILE=$TOP_SHELF_PROFILE_SPECIFIER"
   )
 fi
 
@@ -248,6 +270,9 @@ for export_options in "$LOCAL_EXPORT_OPTIONS" "$UPLOAD_EXPORT_OPTIONS"; do
     plutil -insert provisioningProfiles -dictionary "$export_options"
     plutil -insert "provisioningProfiles.$BUNDLE_ID_KEY" \
       -string "$PROVISIONING_PROFILE_SPECIFIER" \
+      "$export_options"
+    plutil -insert "provisioningProfiles.$TOP_SHELF_BUNDLE_ID_KEY" \
+      -string "$TOP_SHELF_PROFILE_SPECIFIER" \
       "$export_options"
   fi
 done

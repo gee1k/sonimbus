@@ -70,7 +70,7 @@ struct TVCardButtonStyle: ButtonStyle {
                     .stroke(Color.white.opacity(isFocused ? 0.92 : 0.10), lineWidth: isFocused ? 3 : 1)
             }
             .scaleEffect(isFocused && !reduceMotion ? focusedScale : (configuration.isPressed ? 0.985 : 1))
-            .shadow(color: .black.opacity(isFocused ? 0.46 : 0.16), radius: isFocused ? 28 : 10, y: isFocused ? 14 : 5)
+            .shadow(color: .black.opacity(isFocused ? 0.46 : 0), radius: isFocused ? 28 : 0, y: isFocused ? 14 : 0)
             .opacity(isEnabled ? 1 : 0.38)
             .animation(reduceMotion ? nil : .easeOut(duration: 0.16), value: isFocused)
             .animation(reduceMotion ? nil : .easeOut(duration: 0.10), value: configuration.isPressed)
@@ -91,7 +91,7 @@ struct TVHeroButtonStyle: ButtonStyle {
             }
             .scaleEffect(isFocused && !reduceMotion ? 1.025 : (configuration.isPressed ? 0.99 : 1))
             .brightness(isFocused ? 0.06 : 0)
-            .shadow(color: .black.opacity(isFocused ? 0.48 : 0.20), radius: isFocused ? 34 : 14, y: isFocused ? 16 : 7)
+            .shadow(color: .black.opacity(isFocused ? 0.48 : 0), radius: isFocused ? 34 : 0, y: isFocused ? 16 : 0)
             .opacity(isEnabled ? 1 : 0.38)
             .animation(reduceMotion ? nil : .easeOut(duration: 0.16), value: isFocused)
     }
@@ -120,7 +120,7 @@ struct TVPillButtonStyle: ButtonStyle {
                     .stroke(borderColor, lineWidth: isFocused ? 3 : 1)
             }
             .scaleEffect(isFocused && !reduceMotion ? 1.06 : (configuration.isPressed ? 0.97 : 1))
-            .shadow(color: .black.opacity(isFocused ? 0.38 : 0.10), radius: isFocused ? 18 : 6, y: isFocused ? 8 : 3)
+            .shadow(color: .black.opacity(isFocused ? 0.38 : 0), radius: isFocused ? 18 : 0, y: isFocused ? 8 : 0)
             .opacity(isEnabled ? 1 : 0.38)
             .animation(reduceMotion ? nil : .easeOut(duration: 0.15), value: isFocused)
     }
@@ -164,7 +164,7 @@ struct TVIconButtonStyle: ButtonStyle {
                 Circle().stroke(Color.white.opacity(isFocused ? 0.95 : 0.12), lineWidth: isFocused ? 3 : 1)
             }
             .scaleEffect(isFocused && !reduceMotion ? 1.12 : (configuration.isPressed ? 0.94 : 1))
-            .shadow(color: .black.opacity(isFocused ? 0.42 : 0.12), radius: isFocused ? 18 : 6, y: isFocused ? 9 : 3)
+            .shadow(color: .black.opacity(isFocused ? 0.42 : 0), radius: isFocused ? 18 : 0, y: isFocused ? 9 : 0)
             .opacity(isEnabled ? 1 : 0.34)
             .animation(reduceMotion ? nil : .easeOut(duration: 0.15), value: isFocused)
     }
@@ -194,7 +194,7 @@ struct TVPlaybackButtonStyle: ButtonStyle {
                 }
             }
             .scaleEffect(isFocused && !reduceMotion ? 1.11 : (configuration.isPressed ? 0.94 : 1))
-            .shadow(color: .black.opacity(isFocused ? 0.38 : 0), radius: 16, y: 8)
+            .shadow(color: .black.opacity(isFocused ? 0.38 : 0), radius: isFocused ? 16 : 0, y: isFocused ? 8 : 0)
             .opacity(isEnabled ? 1 : 0.28)
             .animation(reduceMotion ? nil : .easeOut(duration: 0.14), value: isFocused)
     }

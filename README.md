@@ -96,7 +96,23 @@ xcodebuild -project Sonimbus.xcodeproj \
 1. 在 Xcode 的 **Settings → Accounts** 中登录自己的 Apple Account。
 2. 打开 `Sonimbus` target 的 **Signing & Capabilities**，启用自动签名并选择自己的 Team。
 3. 将 `com.svend.sonimbus` 改成属于自己的唯一 Bundle ID，例如 `com.example.sonimbus`。
-4. 选择已连接的 Apple TV 后运行。
+4. 为 `SonimbusTopShelf` target 选择相同的 Team，并将其 Bundle ID 改为主应用 ID 加 `.TopShelf`（例如 `com.example.sonimbus.TopShelf`）。
+5. 在两个 target 的 **Signing & Capabilities → App Groups** 中启用同一个属于你的 App Group，同时将工程的 `SONIMBUS_APP_GROUP` 构建设置改为该标识（例如 `group.com.example.sonimbus`）。
+6. 选择已连接的 Apple TV 后运行。
+
+### 多账号与主屏幕内容
+
+超过 500 首的歌曲列表按每页 500 首显示，可以通过标题旁的页码菜单跳转，或在页尾切换前后页。播放、随机播放和从某首开始播放均使用完整歌单。
+
+在 **资料库 → 切换账号** 中扫码添加账号，之后可直接选择已保存的账号。切换会停止当前播放并重新同步资料库；“移除”只删除这台设备保存的凭证。扫码未完成或取消时，当前登录保持有效。
+
+正在播放的队列支持连续横向浏览。心动模式会保留进入前的队列，退出时立即恢复顺序并继续播放当前歌曲。“更多操作”中的子菜单可按确认键或右键展开，按左键或返回键回到上一层。在隐藏按钮的全屏播放状态下，长按遥控器左／右键可切换上一首／下一首，切歌后仍保持全屏。
+
+将云音厅移到 Apple TV 主屏幕第一排，聚焦图标后可浏览当前账号的最近播放和歌单。选中歌曲会播放；选中歌单会打开详情，遥控器播放键可直接播放歌单。切换或移除账号会清理旧的主屏幕内容。Top Shelf 扩展只读取 App Group 中的展示信息，不读取登录凭证。
+
+使用重签名工具时，需要保留嵌入的 `SonimbusTopShelf.appex`、应用组权限，以及主应用和扩展一致的 App Group。缺少这些权限时，应用仍可打开，但动态 Top Shelf 无法共享内容。
+
+使用 `Scripts/package-ipa.sh --signing manual` 打包时，主应用和扩展各需要一个启用了该 App Group 的 App Store Profile。脚本会分别查找；也可用 `--profile` 和 `--top-shelf-profile` 指定。
 
 ### 本地打包
 

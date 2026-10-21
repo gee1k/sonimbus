@@ -36,15 +36,16 @@ enum NeteaseAPI {
         let avatarUrl: String?
     }
 
-    static func qrKey() async throws -> String {
-        try await weapi(QRKeyResponse.self, "/login/qrcode/unikey", ["type": 1]).unikey
+    static func qrKey(client: NeteaseClient = .shared) async throws -> String {
+        let data = try await client.weapi("/login/qrcode/unikey", ["type": 1])
+        return try client.decoded(QRKeyResponse.self, from: data).unikey
     }
 
     static func qrLoginURL(key: String) -> String {
         "https://music.163.com/login?codekey=\(key)"
     }
 
-    static func qrCheck(key: String) async throws -> QRCheckResponse {
+    static func qrCheck(key: String, client: NeteaseClient = .shared) async throws -> QRCheckResponse {
         let data = try await client.weapi("/login/qrcode/client/login", ["key": key, "type": 1])
         return try JSONDecoder().decode(QRCheckResponse.self, from: data)
     }
@@ -61,8 +62,9 @@ enum NeteaseAPI {
         let profile: UserProfile?
     }
 
-    static func account() async throws -> UserProfile? {
-        try await weapi(AccountResponse.self, "/w/nuser/account/get").profile
+    static func account(client: NeteaseClient = .shared) async throws -> UserProfile? {
+        let data = try await client.weapi("/w/nuser/account/get")
+        return try client.decoded(AccountResponse.self, from: data).profile
     }
 
     private struct VIPInfoResponse: Decodable {

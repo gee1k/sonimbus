@@ -4,8 +4,8 @@ struct LibraryView: View {
     @Environment(\.rootTabActivationGeneration) private var rootTabActivationGeneration
     @Environment(AccountStore.self) private var account
     @State private var showLogin = false
+    @State private var showAccounts = false
     @State private var isRefreshing = false
-    @State private var showLogoutConfirmation = false
     @State private var showCreatePlaylist = false
     @State private var playlistPendingDeletion: PlaylistSummary?
 
@@ -16,27 +16,20 @@ struct LibraryView: View {
 
     var body: some View {
         Group {
-            if account.isLoggedIn {
-                loggedInView
-            } else if account.isBootstrapping {
+            if account.isBootstrapping || account.isSwitchingAccount {
                 LoadStateView(title: "正在同步资料库")
                     .background(TVBackground(tint: .indigo))
+            } else if account.isLoggedIn {
+                loggedInView
             } else if account.hasAuthenticationCookie {
                 accountSyncFailedView
             } else {
                 loggedOutView
             }
         }
+        .fullScreenCover(isPresented: $showAccounts) { AccountsView() }
         .fullScreenCover(isPresented: $showLogin) { LoginView() }
         .fullScreenCover(isPresented: $showCreatePlaylist) { CreatePlaylistView() }
-        .alert("退出网易云音乐？", isPresented: $showLogoutConfirmation) {
-            Button("取消", role: .cancel) {}
-            Button("退出登录", role: .destructive) {
-                Task { await account.logout() }
-            }
-        } message: {
-            Text("本机保存的登录凭证会被移除，之后可以随时重新扫码登录。")
-        }
         .alert(
             "删除歌单？",
             isPresented: Binding(
@@ -232,10 +225,11 @@ struct LibraryView: View {
             }
             .buttonStyle(TVPillButtonStyle())
             .disabled(isRefreshing)
-            Button("退出登录", role: .destructive) {
-                showLogoutConfirmation = true
+            Button { showAccounts = true } label: {
+                Label("切换账号", systemImage: "person.2.fill")
             }
-            .buttonStyle(TVPillButtonStyle(destructive: true))
+            .buttonStyle(TVPillButtonStyle())
+            .accessibilityIdentifier("manage-accounts")
         }
         .padding(.horizontal, TVTheme.horizontalPadding)
         .focusSection()
@@ -259,6 +253,10 @@ struct LibraryView: View {
                     .foregroundStyle(TVTheme.secondaryText)
                 Button("扫码登录") { showLogin = true }
                     .buttonStyle(TVPillButtonStyle(prominent: true))
+                if !account.savedAccounts.isEmpty {
+                    Button("选择已保存的账号") { showAccounts = true }
+                        .buttonStyle(TVPillButtonStyle())
+                }
             }
         }
     }
@@ -287,6 +285,10 @@ struct LibraryView: View {
 
                     Button("重新扫码") { showLogin = true }
                         .buttonStyle(TVPillButtonStyle())
+                    if !account.savedAccounts.isEmpty {
+                        Button("切换账号") { showAccounts = true }
+                            .buttonStyle(TVPillButtonStyle())
+                    }
                 }
             }
         }
@@ -847,5 +849,87 @@ private struct PlaybackSettingsToggle: View {
         .glassPanel(cornerRadius: 28)
         .accessibilityElement(children: .combine)
         .accessibilityValue(isOn ? "已开启" : "已关闭")
+    }
+}
+
+
+struct AccountsView: View {
+    @Environment(\.dismiss) private var dismiss
+    @Environment(AccountStore.self) private var account
+    @State private var showLogin = false
+    @State private var accountToRemove: UserProfile?
+
+    var body: some View {
+        ZStack {
+            TVBackground(tint: .indigo)
+            VStack(alignment: .leading, spacing: 30) {
+                Text("账号").font(.system(size: 46, weight: .bold, design: .rounded))
+                Text("选择账号即可切换资料库。登录凭证仅保存在这台 Apple TV 的钥匙串中。")
+                    .foregroundStyle(TVTheme.secondaryText)
+                ScrollView {
+                    LazyVStack(spacing: 18) {
+                        ForEach(account.savedAccounts, id: \.userId) { profile in
+                            HStack(spacing: 24) {
+                                Button {
+                                    if account.profile?.userId == profile.userId { dismiss() }
+                                    else {
+                                        Task {
+                                            await account.switchAccount(userID: profile.userId)
+                                            if account.isLoggedIn { dismiss() }
+                                        }
+                                    }
+                                } label: {
+                                    HStack(spacing: 24) {
+                                        ArtworkView(url: profile.avatarUrl.flatMap { ArtworkURL.make($0, size: 160) }, cornerRadius: 40, symbol: "person.fill")
+                                            .frame(width: 80, height: 80)
+                                        Text(profile.nickname).font(.title3.bold())
+                                        Spacer()
+                                        if account.profile?.userId == profile.userId {
+                                            Label("当前账号", systemImage: "checkmark.circle.fill")
+                                        }
+                                    }
+                                    .padding(24)
+                                }
+                                .buttonStyle(TVCardButtonStyle(cornerRadius: 24, contentPadding: 0))
+                                .accessibilityIdentifier("account-\(profile.userId)")
+                                Button("移除", role: .destructive) { accountToRemove = profile }
+                                    .buttonStyle(TVPillButtonStyle(destructive: true))
+                            }
+                        }
+                    }
+                    .padding(20)
+                }
+                if let error = account.bootstrapError {
+                    Text(error).foregroundStyle(TVTheme.accent)
+                } else if !account.isLoggedIn && account.hasBootstrapped && !account.isSwitchingAccount {
+                    Text("账号凭证可能已过期，请扫码重新登录。").foregroundStyle(TVTheme.secondaryText)
+                }
+                HStack(spacing: 24) {
+                    Button("添加账号") { showLogin = true }
+                        .buttonStyle(TVPillButtonStyle(prominent: true))
+                        .accessibilityIdentifier("add-account")
+                    Button("返回") { dismiss() }
+                        .buttonStyle(TVPillButtonStyle())
+                    if account.isSwitchingAccount || account.isBootstrapping { ProgressView() }
+                }
+            }
+            .padding(.horizontal, 140)
+            .padding(.vertical, 60)
+            .disabled(account.isSwitchingAccount || account.isBootstrapping)
+        }
+        .fullScreenCover(isPresented: $showLogin) { LoginView() }
+        .alert("从本机移除账号？", isPresented: Binding(
+            get: { accountToRemove != nil },
+            set: { if !$0 { accountToRemove = nil } }
+        )) {
+            Button("取消", role: .cancel) { accountToRemove = nil }
+            Button("移除", role: .destructive) {
+                if let profile = accountToRemove { account.removeSavedAccount(userID: profile.userId) }
+                accountToRemove = nil
+            }
+        } message: {
+            Text("移除《\(accountToRemove?.nickname ?? "")》在这台 Apple TV 上保存的登录凭证，之后可重新扫码添加。网易云账号和歌单不受影响。")
+        }
+        .onExitCommand { if !account.isSwitchingAccount { dismiss() } }
     }
 }

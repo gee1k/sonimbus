@@ -7,6 +7,8 @@ struct LoginView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(AccountStore.self) private var account
 
+    @State private var loginClient = NeteaseClient()
+    @State private var loginTask: Task<Void, Never>?
     @State private var qrImage: UIImage?
     @State private var key: String?
     @State private var status = "正在生成二维码…"
@@ -62,7 +64,7 @@ struct LoginView: View {
 
                     if errorMessage != nil {
                         Button("重新生成") {
-                            Task { await beginLogin() }
+                            startLogin()
                         }
                         .buttonStyle(TVPillButtonStyle(prominent: true))
                     }
@@ -70,8 +72,15 @@ struct LoginView: View {
             }
             .padding(.horizontal, 120)
         }
-        .task { await beginLogin() }
+        .onAppear { startLogin() }
+        .onDisappear { loginTask?.cancel(); key = nil }
         .onExitCommand { dismiss() }
+    }
+
+    @MainActor
+    private func startLogin() {
+        loginTask?.cancel()
+        loginTask = Task { await beginLogin() }
     }
 
     @MainActor
@@ -80,7 +89,8 @@ struct LoginView: View {
         qrImage = nil
         status = "正在生成二维码…"
         do {
-            let newKey = try await NeteaseAPI.qrKey()
+            let newKey = try await NeteaseAPI.qrKey(client: loginClient)
+            try Task.checkCancellation()
             key = newKey
             qrImage = makeQRCode(NeteaseAPI.qrLoginURL(key: newKey))
             status = "等待扫码"
@@ -97,7 +107,9 @@ struct LoginView: View {
         var consecutiveFailures = 0
         while !Task.isCancelled, self.key == key {
             do {
-                let result = try await NeteaseAPI.qrCheck(key: key)
+                let result = try await NeteaseAPI.qrCheck(key: key, client: loginClient)
+                try Task.checkCancellation()
+                guard self.key == key else { return }
                 consecutiveFailures = 0
                 switch result.code {
                 case 800:
@@ -109,11 +121,14 @@ struct LoginView: View {
                     status = "已扫码，请在手机上确认"
                 case 803:
                     status = "登录成功，正在同步资料库…"
-                    if await account.bootstrap() {
+                    do {
+                        try await account.completeLogin(using: loginClient)
                         dismiss()
+                    } catch is CancellationError {
                         return
+                    } catch {
+                        errorMessage = error.localizedDescription
                     }
-                    errorMessage = account.bootstrapError ?? "账号资料同步失败，请重试"
                     return
                 default:
                     status = result.message ?? "等待网易云音乐确认"

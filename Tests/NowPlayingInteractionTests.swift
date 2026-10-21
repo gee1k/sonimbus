@@ -86,6 +86,7 @@ private enum TestRoute: Hashable {
 
     state.toggleQueue()
     #expect(state.panel == .queue)
+    #expect(state.contentPanel == .lyrics)
     #expect(state.handleBack() == .handled)
     #expect(state.panel == .lyrics)
     #expect(state.showsControls)
@@ -155,4 +156,18 @@ private enum TestRoute: Hashable {
 
     #expect(state.handleBack(hasCurrentTrack: false) == .deferToSystem)
     #expect(state.chromeMode == .controls)
+}
+
+@Test("大歌单分页完整覆盖歌曲且不会改变原始序号")
+func trackPagesCoverEntireCollection() {
+    for count in [0, 1, 500, 501, 2057, 3000] {
+        let first = TrackListPage(itemCount: count, index: 0)
+        let indices = (0..<first.count).flatMap { TrackListPage(itemCount: count, index: $0).range }
+        #expect(indices == Array(0..<count))
+        for page in 0..<first.count {
+            #expect(TrackListPage(itemCount: count, index: page).range.count <= TrackListPage.size)
+        }
+        #expect(TrackListPage(itemCount: count, index: -1).index == 0)
+        #expect(TrackListPage(itemCount: count, index: 1000).index == first.count - 1)
+    }
 }

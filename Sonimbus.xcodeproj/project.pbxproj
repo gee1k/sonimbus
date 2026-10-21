@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		B40000000000000000000001 /* NowPlayingRemoteViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = F40000000000000000000001 /* NowPlayingRemoteViews.swift */; };
 		B00000000000000000000001 /* SonimbusApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000001 /* SonimbusApp.swift */; };
 		B00000000000000000000002 /* AppShellView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000002 /* AppShellView.swift */; };
 		B00000000000000000000003 /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000003 /* Models.swift */; };
@@ -32,6 +33,12 @@
 		B00000000000000000000025 /* NowPlayingInteraction.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000027 /* NowPlayingInteraction.swift */; };
 		B00000000000000000000026 /* ContentStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000028 /* ContentStore.swift */; };
 		B10000000000000000000001 /* NavigationRegressionUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F10000000000000000000001 /* NavigationRegressionUITests.swift */; };
+		B20000000000000000000001 /* SavedAccounts.swift in Sources */ = {isa = PBXBuildFile; fileRef = F20000000000000000000001 /* SavedAccounts.swift */; };
+		B30000000000000000000001 /* TopShelfContent.swift in Sources */ = {isa = PBXBuildFile; fileRef = F30000000000000000000001; };
+		B30000000000000000000002 /* TopShelfPublisher.swift in Sources */ = {isa = PBXBuildFile; fileRef = F30000000000000000000002; };
+		B30000000000000000000003 /* ContentProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = F30000000000000000000003; };
+		B30000000000000000000004 /* TopShelfContent.swift in Sources */ = {isa = PBXBuildFile; fileRef = F30000000000000000000001; };
+		B30000000000000000000005 /* SonimbusTopShelf.appex in Embed App Extensions */ = {isa = PBXBuildFile; fileRef = F30000000000000000000004; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -42,9 +49,11 @@
 			remoteGlobalIDString = A00000000000000000000002;
 			remoteInfo = Sonimbus;
 		};
+		C30000000000000000000001 = {isa = PBXContainerItemProxy; containerPortal = A00000000000000000000001; proxyType = 1; remoteGlobalIDString = A30000000000000000000001; remoteInfo = SonimbusTopShelf; };
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
+		F40000000000000000000001 /* NowPlayingRemoteViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NowPlayingRemoteViews.swift; sourceTree = "<group>"; };
 		F00000000000000000000001 /* SonimbusApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SonimbusApp.swift; sourceTree = "<group>"; };
 		F00000000000000000000002 /* AppShellView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppShellView.swift; sourceTree = "<group>"; };
 		F00000000000000000000003 /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
@@ -74,7 +83,16 @@
 		F00000000000000000000028 /* ContentStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentStore.swift; sourceTree = "<group>"; };
 		F10000000000000000000001 /* NavigationRegressionUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NavigationRegressionUITests.swift; sourceTree = "<group>"; };
 		F10000000000000000000002 /* SonimbusUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = SonimbusUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		F20000000000000000000001 /* SavedAccounts.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SavedAccounts.swift; sourceTree = "<group>"; };
+		F30000000000000000000001 /* TopShelfContent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TopShelfContent.swift; sourceTree = "<group>"; };
+		F30000000000000000000002 /* TopShelfPublisher.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TopShelfPublisher.swift; sourceTree = "<group>"; };
+		F30000000000000000000003 /* ContentProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentProvider.swift; sourceTree = "<group>"; };
+		F30000000000000000000004 /* SonimbusTopShelf.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = SonimbusTopShelf.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+        D30000000000000000000004 /* Embed App Extensions */ = {isa = PBXCopyFilesBuildPhase; buildActionMask = 2147483647; dstPath = ""; dstSubfolderSpec = 13; files = (B30000000000000000000005, ); name = "Embed App Extensions"; runOnlyForDeploymentPostprocessing = 0; };
+/* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFrameworksBuildPhase section */
 		D00000000000000000000001 /* Frameworks */ = {
@@ -91,6 +109,7 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		D30000000000000000000002 = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
@@ -99,6 +118,7 @@
 			children = (
 				E00000000000000000000002 /* Sonimbus */,
 				E10000000000000000000001 /* SonimbusUITests */,
+				E30000000000000000000001 /* SonimbusTopShelf */,
 				E00000000000000000000008 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -141,6 +161,9 @@
 				F00000000000000000000006 /* NeteaseClient.swift */,
 				F00000000000000000000007 /* NeteaseAPI.swift */,
 				F00000000000000000000008 /* AccountStore.swift */,
+				F20000000000000000000001 /* SavedAccounts.swift */,
+				F30000000000000000000001 /* TopShelfContent.swift */,
+				F30000000000000000000002 /* TopShelfPublisher.swift */,
 				F00000000000000000000009 /* PlayerService.swift */,
 				F00000000000000000000027 /* NowPlayingInteraction.swift */,
 				F00000000000000000000028 /* ContentStore.swift */,
@@ -169,6 +192,7 @@
 				F00000000000000000000017 /* LibraryView.swift */,
 				F00000000000000000000018 /* DetailViews.swift */,
 				F00000000000000000000019 /* NowPlayingView.swift */,
+				F40000000000000000000001 /* NowPlayingRemoteViews.swift */,
 				F00000000000000000000026 /* ManagementViews.swift */,
 			);
 			path = Features;
@@ -188,11 +212,13 @@
 			isa = PBXGroup;
 			children = (
 				F00000000000000000000022 /* Sonimbus.app */,
+				F30000000000000000000004 /* SonimbusTopShelf.appex */,
 				F10000000000000000000002 /* SonimbusUITests.xctest */,
 			);
 			name = Products;
 			sourceTree = "<group>";
 		};
+		E30000000000000000000001 /* SonimbusTopShelf */ = {isa = PBXGroup; children = (F30000000000000000000003, ); path = SonimbusTopShelf; sourceTree = "<group>"; };
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
@@ -203,11 +229,11 @@
 				D00000000000000000000002 /* Sources */,
 				D00000000000000000000001 /* Frameworks */,
 				D00000000000000000000003 /* Resources */,
+				D30000000000000000000004 /* Embed App Extensions */,
 			);
 			buildRules = (
 			);
-			dependencies = (
-			);
+			dependencies = (C30000000000000000000002, );
 			name = Sonimbus;
 			productName = Sonimbus;
 			productReference = F00000000000000000000022 /* Sonimbus.app */;
@@ -231,6 +257,15 @@
 			productReference = F10000000000000000000002 /* SonimbusUITests.xctest */;
 			productType = "com.apple.product-type.bundle.ui-testing";
 		};
+		A30000000000000000000001 /* SonimbusTopShelf */ = {
+            isa = PBXNativeTarget;
+            buildConfigurationList = A30000000000000000000002;
+            buildPhases = (D30000000000000000000001, D30000000000000000000002, D30000000000000000000003, );
+            buildRules = (); dependencies = ();
+            name = SonimbusTopShelf; productName = SonimbusTopShelf;
+            productReference = F30000000000000000000004;
+            productType = "com.apple.product-type.app-extension";
+        };
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -243,6 +278,15 @@
 				TargetAttributes = {
 					A00000000000000000000002 = {
 						CreatedOnToolsVersion = 26.5;
+						SystemCapabilities = {
+							com.apple.ApplicationGroups.iOS = { enabled = 1; };
+						};
+					};
+					A30000000000000000000001 = {
+						CreatedOnToolsVersion = 26.5;
+						SystemCapabilities = {
+							com.apple.ApplicationGroups.iOS = { enabled = 1; };
+						};
 					};
 					A10000000000000000000002 = {
 						CreatedOnToolsVersion = 26.5;
@@ -266,6 +310,7 @@
 			targets = (
 				A00000000000000000000002 /* Sonimbus */,
 				A10000000000000000000002 /* SonimbusUITests */,
+				A30000000000000000000001 /* SonimbusTopShelf */,
 			);
 		};
 /* End PBXProject section */
@@ -286,6 +331,7 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		D30000000000000000000003 = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
@@ -301,6 +347,9 @@
 				B00000000000000000000006 /* NeteaseClient.swift in Sources */,
 				B00000000000000000000007 /* NeteaseAPI.swift in Sources */,
 				B00000000000000000000008 /* AccountStore.swift in Sources */,
+				B20000000000000000000001 /* SavedAccounts.swift in Sources */,
+				B30000000000000000000001 /* TopShelfContent.swift in Sources */,
+				B30000000000000000000002 /* TopShelfPublisher.swift in Sources */,
 				B00000000000000000000009 /* PlayerService.swift in Sources */,
 				B00000000000000000000025 /* NowPlayingInteraction.swift in Sources */,
 				B00000000000000000000026 /* ContentStore.swift in Sources */,
@@ -315,6 +364,7 @@
 				B00000000000000000000017 /* LibraryView.swift in Sources */,
 				B00000000000000000000018 /* DetailViews.swift in Sources */,
 				B00000000000000000000019 /* NowPlayingView.swift in Sources */,
+				B40000000000000000000001 /* NowPlayingRemoteViews.swift in Sources */,
 				B00000000000000000000024 /* ManagementViews.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -327,6 +377,7 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		D30000000000000000000001 = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (B30000000000000000000003, B30000000000000000000004,); runOnlyForDeploymentPostprocessing = 0; };
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
@@ -335,12 +386,14 @@
 			target = A00000000000000000000002 /* Sonimbus */;
 			targetProxy = C10000000000000000000001 /* PBXContainerItemProxy */;
 		};
+		C30000000000000000000002 = {isa = PBXTargetDependency; target = A30000000000000000000001; targetProxy = C30000000000000000000001; };
 /* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
 		A00000000000000000000004 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				SONIMBUS_APP_GROUP = group.com.svend.sonimbus;
 				CLANG_ENABLE_MODULES = YES;
 				CLANG_ENABLE_OBJC_ARC = YES;
 				ENABLE_TESTABILITY = YES;
@@ -355,6 +408,7 @@
 		A00000000000000000000005 /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				SONIMBUS_APP_GROUP = group.com.svend.sonimbus;
 				CLANG_ENABLE_MODULES = YES;
 				CLANG_ENABLE_OBJC_ARC = YES;
 				GCC_C_LANGUAGE_STANDARD = gnu17;
@@ -371,12 +425,14 @@
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = Sonimbus/Resources/Info.plist;
+				CODE_SIGN_ENTITLEMENTS = Sonimbus/Resources/Sonimbus.entitlements;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
 				MARKETING_VERSION = 1.1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.svend.sonimbus;
+				PROVISIONING_PROFILE_SPECIFIER = "$(SONIMBUS_APP_PROFILE)";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = appletvos;
 				SUPPORTED_PLATFORMS = "appletvos appletvsimulator";
@@ -395,12 +451,14 @@
 				CURRENT_PROJECT_VERSION = 8;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = Sonimbus/Resources/Info.plist;
+				CODE_SIGN_ENTITLEMENTS = Sonimbus/Resources/Sonimbus.entitlements;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
 				MARKETING_VERSION = 1.1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.svend.sonimbus;
+				PROVISIONING_PROFILE_SPECIFIER = "$(SONIMBUS_APP_PROFILE)";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = appletvos;
 				SUPPORTED_PLATFORMS = "appletvos appletvsimulator";
@@ -443,6 +501,44 @@
 			};
 			name = Release;
 		};
+        A30000000000000000000003 /* Debug */ = {isa = XCBuildConfiguration; buildSettings = {
+            APPLICATION_EXTENSION_API_ONLY = YES;
+            CODE_SIGN_STYLE = Automatic;
+            CODE_SIGN_ENTITLEMENTS = Sonimbus/Resources/Sonimbus.entitlements;
+            CURRENT_PROJECT_VERSION = 8;
+            GENERATE_INFOPLIST_FILE = NO;
+            INFOPLIST_FILE = SonimbusTopShelf/Info.plist;
+            LD_RUNPATH_SEARCH_PATHS = ("$(inherited)", "@executable_path/Frameworks", "@executable_path/../../Frameworks", );
+            MARKETING_VERSION = 1.1.0;
+            PRODUCT_BUNDLE_IDENTIFIER = com.svend.sonimbus.TopShelf;
+            PROVISIONING_PROFILE_SPECIFIER = "$(SONIMBUS_TOP_SHELF_PROFILE)";
+            PRODUCT_NAME = "$(TARGET_NAME)";
+            SDKROOT = appletvos;
+            SKIP_INSTALL = YES;
+            SUPPORTED_PLATFORMS = "appletvos appletvsimulator";
+            SWIFT_VERSION = 5.0;
+            TARGETED_DEVICE_FAMILY = 3;
+            TVOS_DEPLOYMENT_TARGET = 17.0;
+        }; name = Debug; };
+        A30000000000000000000004 /* Release */ = {isa = XCBuildConfiguration; buildSettings = {
+            APPLICATION_EXTENSION_API_ONLY = YES;
+            CODE_SIGN_STYLE = Automatic;
+            CODE_SIGN_ENTITLEMENTS = Sonimbus/Resources/Sonimbus.entitlements;
+            CURRENT_PROJECT_VERSION = 8;
+            GENERATE_INFOPLIST_FILE = NO;
+            INFOPLIST_FILE = SonimbusTopShelf/Info.plist;
+            LD_RUNPATH_SEARCH_PATHS = ("$(inherited)", "@executable_path/Frameworks", "@executable_path/../../Frameworks", );
+            MARKETING_VERSION = 1.1.0;
+            PRODUCT_BUNDLE_IDENTIFIER = com.svend.sonimbus.TopShelf;
+            PROVISIONING_PROFILE_SPECIFIER = "$(SONIMBUS_TOP_SHELF_PROFILE)";
+            PRODUCT_NAME = "$(TARGET_NAME)";
+            SDKROOT = appletvos;
+            SKIP_INSTALL = YES;
+            SUPPORTED_PLATFORMS = "appletvos appletvsimulator";
+            SWIFT_VERSION = 5.0;
+            TARGETED_DEVICE_FAMILY = 3;
+            TVOS_DEPLOYMENT_TARGET = 17.0;
+        }; name = Release; };
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -473,6 +569,7 @@
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
+		A30000000000000000000002 = {isa = XCConfigurationList; buildConfigurations = (A30000000000000000000003, A30000000000000000000004, ); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
 /* End XCConfigurationList section */
 	};
 	rootObject = A00000000000000000000001 /* Project object */;

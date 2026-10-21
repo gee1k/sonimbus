@@ -72,6 +72,7 @@ final class PlayerService {
             updateRemoteCommandAvailability()
         }
     }
+    private(set) var isLoadingIntelligence = false
     private(set) var duration: TimeInterval = 0
     private(set) var lyrics: ParsedLyrics?
     private(set) var isLoadingLyrics = false
@@ -116,6 +117,15 @@ final class PlayerService {
     private var lyricsGeneration = 0
     private var fmGeneration = 0
     private var playRequestGeneration = 0
+    private var intelligenceTask: Task<Void, Never>?
+    private var intelligenceReturnState: IntelligenceReturnState?
+
+    private struct IntelligenceReturnState: Codable {
+        let tracks: [Track]
+        let shuffledTracks: [Track]
+        let source: PlaySource
+        let shuffle: Bool
+    }
     private var fmUpcoming: [Track] = []
     private var fmPrefetchTask: Task<Void, Never>?
     private var scrobbled = false
@@ -206,6 +216,7 @@ final class PlayerService {
     func play(_ tracks: [Track], source: PlaySource, startingAt track: Track? = nil) {
         let uniqueTracks = PlaybackQueuePolicy.deduplicated(visibleTracks(tracks))
         guard !uniqueTracks.isEmpty else { return }
+        if case .intelligence = source {} else { intelligenceReturnState = nil }
         consecutiveFailures = 0
         queue = uniqueTracks
         self.source = source
@@ -317,6 +328,10 @@ final class PlayerService {
     }
 
     func clearForAccountChange() {
+        intelligenceTask?.cancel()
+        intelligenceTask = nil
+        isLoadingIntelligence = false
+        intelligenceReturnState = nil
         resolveGeneration += 1
         lyricsGeneration += 1
         fmGeneration += 1
@@ -360,6 +375,9 @@ final class PlayerService {
     }
 
     func startPersonalFM() {
+        intelligenceTask?.cancel()
+        isLoadingIntelligence = false
+        intelligenceReturnState = nil
         ToastCenter.shared.show("正在为你挑选私人 FM…")
         consecutiveFailures = 0
         resolveGeneration += 1
@@ -402,32 +420,121 @@ final class PlayerService {
     func startIntelligence(
         from track: Track,
         playlistID: Int,
+        returnTracks: [Track]? = nil,
         onStarted: (() -> Void)? = nil
     ) {
+        intelligenceTask?.cancel()
         playRequestGeneration += 1
         let requestGeneration = playRequestGeneration
+        let returnState = IntelligenceReturnState(
+            tracks: returnTracks ?? queue,
+            shuffledTracks: returnTracks == nil ? shuffledQueue : [],
+            source: returnTracks == nil ? source : .playlist(playlistID),
+            shuffle: shuffleEnabled
+        )
+        isLoadingIntelligence = true
         ToastCenter.shared.show("正在生成心动歌单…")
-        Task {
+        intelligenceTask = Task {
+            defer {
+                if requestGeneration == playRequestGeneration { isLoadingIntelligence = false }
+            }
             do {
-                let generated = try await NeteaseAPI.intelligenceList(
-                    songID: track.id,
-                    playlistID: playlistID
-                )
-                guard requestGeneration == playRequestGeneration else { return }
+                let generated: [Track]
+#if DEBUG
+                if Self.usesUITestFixture {
+                    try await Task.sleep(for: .milliseconds(200))
+                    generated = Array(Self.uiTestTracks.reversed())
+                } else {
+                    generated = try await NeteaseAPI.intelligenceList(songID: track.id, playlistID: playlistID)
+                }
+#else
+                generated = try await NeteaseAPI.intelligenceList(songID: track.id, playlistID: playlistID)
+#endif
+                guard !Task.isCancelled, requestGeneration == playRequestGeneration else { return }
                 var seen = Set<Int>()
                 let tracks = generated.filter { seen.insert($0.id).inserted }
                 guard !tracks.isEmpty else {
                     ToastCenter.shared.show("暂时没有生成可播放的心动歌曲")
                     return
                 }
-                play(tracks, source: .intelligence(playlistID))
+                intelligenceReturnState = returnState
+                isLoadingIntelligence = false
+                if currentTrack?.id == track.id, returnTracks == nil {
+                    // Switching mode changes upcoming songs without restarting the seed song.
+                    replaceQueue(with: [track] + tracks, source: .intelligence(playlistID))
+                } else {
+                    play(tracks, source: .intelligence(playlistID))
+                }
                 onStarted?()
                 ToastCenter.shared.show("已开启心动模式")
             } catch {
-                guard requestGeneration == playRequestGeneration else { return }
+                guard !Task.isCancelled, requestGeneration == playRequestGeneration else { return }
                 ToastCenter.shared.show(error.localizedDescription)
             }
         }
+    }
+
+    var isIntelligenceActive: Bool {
+        if case .intelligence = source { return true }
+        return false
+    }
+
+    /// Restores the previous queue locally while the current song keeps playing.
+    func stopIntelligence() {
+        intelligenceTask?.cancel()
+        intelligenceTask = nil
+        playRequestGeneration += 1
+        if isLoadingIntelligence {
+            isLoadingIntelligence = false
+            ToastCenter.shared.show("已取消开启心动模式")
+            return
+        }
+        guard case .intelligence(let playlistID) = source else { return }
+        let returnState = intelligenceReturnState
+        intelligenceReturnState = nil
+        if let saved = returnState {
+            shuffleEnabled = saved.shuffle
+            UserDefaults.standard.set(saved.shuffle, forKey: "player.shuffle")
+            replaceQueue(with: saved.tracks, source: saved.source, persists: false)
+            if saved.shuffle, !saved.shuffledTracks.isEmpty, let current = currentTrack {
+                let validIDs = Set(queue.map(\.id))
+                shuffledQueue = PlaybackQueuePolicy.deduplicated(saved.shuffledTracks.filter { validIDs.contains($0.id) })
+                let restoredIDs = Set(shuffledQueue.map(\.id))
+                if !restoredIDs.contains(current.id) { shuffledQueue.insert(current, at: 0) }
+                shuffledQueue += queue.filter { $0.id != current.id && !restoredIDs.contains($0.id) }
+                currentIndex = shuffledQueue.firstIndex(where: { $0.id == current.id }) ?? 0
+            }
+        } else {
+            // Older saved sessions have no return queue. Exit immediately using
+            // the available songs instead of blocking on a full playlist fetch.
+            replaceQueue(with: queue, source: .playlist(playlistID), persists: false)
+        }
+        persistState()
+        updateNowPlayingQueueContext()
+        updateRemoteCommandAvailability()
+        ToastCenter.shared.show("已退出心动模式")
+    }
+
+    private func replaceQueue(with tracks: [Track], source: PlaySource, persists: Bool = true) {
+        guard let currentTrack else {
+            play(tracks, source: source)
+            return
+        }
+        var uniqueTracks = PlaybackQueuePolicy.deduplicated(visibleTracks(tracks))
+        if !uniqueTracks.contains(where: { $0.id == currentTrack.id }) {
+            uniqueTracks.insert(currentTrack, at: 0)
+        }
+        queue = uniqueTracks
+        self.source = source
+        if shuffleEnabled {
+            shuffledQueue = [currentTrack] + uniqueTracks.filter { $0.id != currentTrack.id }.shuffled()
+            currentIndex = 0
+        } else {
+            currentIndex = uniqueTracks.firstIndex(where: { $0.id == currentTrack.id }) ?? 0
+        }
+        if persists { persistState() }
+        updateNowPlayingQueueContext()
+        updateRemoteCommandAvailability()
     }
 
     func dislikeCurrentFM() {
@@ -504,10 +611,10 @@ final class PlayerService {
         start(activeQueue[nextIndex])
     }
 
-    func previous() {
+    func previous(restartCurrent: Bool = true) {
         guard source != .personalFM else { return }
         consecutiveFailures = 0
-        if progress > 4 {
+        if restartCurrent, progress > 4 {
             seek(to: 0)
             return
         }
@@ -631,6 +738,7 @@ final class PlayerService {
 
     private func start(_ track: Track, at position: TimeInterval = 0) {
         playRequestGeneration += 1
+        isLoadingIntelligence = false
         if source != .personalFM {
             fmGeneration += 1
             fmUpcoming = []
@@ -1171,6 +1279,7 @@ final class PlayerService {
         let shuffle: Bool
         let progress: TimeInterval?
         let reachedEnd: Bool?
+        let intelligenceReturnState: IntelligenceReturnState?
     }
 
     private func persistState() {
@@ -1189,7 +1298,8 @@ final class PlayerService {
             repeatMode: repeatMode,
             shuffle: shuffleEnabled,
             progress: progress,
-            reachedEnd: didReachEnd
+            reachedEnd: didReachEnd,
+            intelligenceReturnState: intelligenceReturnState
         )
         guard let data = try? JSONEncoder().encode(state) else { return }
         try? data.write(to: Self.stateFileURL, options: .atomic)
@@ -1203,6 +1313,7 @@ final class PlayerService {
         queue = PlaybackQueuePolicy.deduplicated(visibleTracks(state.queue))
         guard !queue.isEmpty else { return }
         source = state.source
+        intelligenceReturnState = state.intelligenceReturnState
         repeatMode = state.repeatMode
         shuffleEnabled = state.shuffle
         if shuffleEnabled {

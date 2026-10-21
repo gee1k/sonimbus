@@ -141,6 +141,7 @@ struct NowPlayingInteractionState: Equatable {
     private var panelBeforeQueue: NowPlayingPanel = .lyrics
 
     var showsControls: Bool { chromeMode == .controls }
+    var contentPanel: NowPlayingPanel { panel == .queue ? panelBeforeQueue : panel }
 
     mutating func activate() {
         if panel == .queue {
@@ -212,5 +213,27 @@ struct NowPlayingInteractionState: Equatable {
             return .handled
         }
         return .deferToSystem
+    }
+}
+
+
+/// Page only the rendered rows; playback always receives the entire collection.
+struct TrackListPage: Equatable {
+    static let size = 500
+    let itemCount: Int
+    let index: Int
+    let count: Int
+
+    init(itemCount: Int, index: Int) {
+        let total = max(0, itemCount)
+        let pages = max(1, total / Self.size + (total % Self.size == 0 ? 0 : 1))
+        self.itemCount = total
+        self.count = pages
+        self.index = min(max(0, index), pages - 1)
+    }
+
+    var range: Range<Int> {
+        let start = index * Self.size
+        return start..<min(start + Self.size, itemCount)
     }
 }

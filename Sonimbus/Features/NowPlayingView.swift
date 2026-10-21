@@ -3,8 +3,11 @@ import UIKit
 
 private enum NowPlayingFocus: Hashable {
     case emptyReturn
+    case emptyResume
+    case emptyFM
     case immersive
     case fmDislike
+    case intelligence
     case info
     case favorite
     case moreActions
@@ -16,6 +19,7 @@ private enum NowPlayingFocus: Hashable {
     case lyricsRetry
     case lyricsMode
     case queueMode
+    case queue
 }
 
 struct NowPlayingView: View {
@@ -34,11 +38,14 @@ struct NowPlayingView: View {
     @State private var expandsStage = false
     @State private var backgroundBreathes = false
     @State private var isInfoPresented = false
+    @State private var isMorePresented = false
+    @State private var queueFocusRequest: PlaybackQueueFocusRequest?
+    @State private var queueFocusGeneration = 0
+    @State private var requestedControlFocus: NowPlayingFocus? = .play
     @State private var isTimelineFocusEnabled = true
     @State private var modeFocusFallback: NowPlayingFocus?
     @State private var pendingPlaybackFocusTrackID: Int?
     @FocusState private var focusedControl: NowPlayingFocus?
-    @FocusState private var focusedQueueID: Int?
 
     var body: some View {
         ZStack {
@@ -51,10 +58,6 @@ struct NowPlayingView: View {
             if player.currentTrack == nil {
                 emptyPlayer
             } else {
-                if !interaction.showsControls {
-                    immersiveSurface
-                        .disabled(isInfoPresented)
-                }
                 VStack(spacing: 0) {
                     header
                     stage
@@ -82,11 +85,30 @@ struct NowPlayingView: View {
                             }
                     }
                 }
-                .id(player.currentTrack?.id)
+                .disabled(isMorePresented)
                 .padding(.horizontal, 76)
-                .padding(.vertical, 30)
+                .padding(.vertical, 22)
+                // An input overlay stays registered and unobscured while the
+                // controls animate, so consecutive remote presses remain valid.
+                immersiveSurface
+                    .disabled(interaction.showsControls || isInfoPresented || isMorePresented)
+                    .allowsHitTesting(!interaction.showsControls && !isInfoPresented && !isMorePresented)
+                    .accessibilityHidden(interaction.showsControls)
+                    .opacity(interaction.showsControls ? 0 : 1)
+                    .transaction { $0.animation = nil }
             }
             toastOverlay
+            if isMorePresented, let track = player.currentTrack {
+                NowPlayingMoreActionsPanel(track: track, isLiked: account.isLiked(track),
+                                           ownedPlaylists: account.ownedPlaylists,
+                                           sourcePlaylistID: player.source.playlistID,
+                                           album: navigableAlbum, artists: navigableArtists,
+                                           close: closeMoreActions, openDetail: { route in
+                                               isMorePresented = false
+                                               openDetail(route)
+                                           })
+                    .transition(.opacity)
+            }
         }
         .focusScope(focusScope)
         .modifier(
@@ -98,6 +120,7 @@ struct NowPlayingView: View {
         .animation(reduceMotion ? nil : .easeOut(duration: 0.2), value: toast.current)
         .animation(reduceMotion ? nil : .easeOut(duration: 0.22), value: interaction.showsControls)
         .animation(reduceMotion ? nil : .easeOut(duration: 0.22), value: isInfoPresented)
+        .animation(reduceMotion ? nil : .easeOut(duration: 0.18), value: isMorePresented)
         .task(id: activationGeneration) {
             await activatePlayerIfNeeded()
         }
@@ -111,9 +134,9 @@ struct NowPlayingView: View {
         .onChange(of: isActive) { _, active in
             if !active {
                 isInfoPresented = false
+                isMorePresented = false
                 modeFocusFallback = nil
                 focusedControl = nil
-                focusedQueueID = nil
                 idleGeneration &+= 1
             }
         }
@@ -121,17 +144,15 @@ struct NowPlayingView: View {
             guard isActive else { return }
             if oldID != newID, let newID {
                 isInfoPresented = false
-                interaction.showControls()
-                if interaction.panel == .queue {
-                    pendingPlaybackFocusTrackID = nil
-                    requestQueueFocus(newID)
-                } else {
-                    focusedControl = nil
+                interaction.clearLyricSelection()
+                // Keep the view identity, current control and immersive mode when
+                // a song changes. Only an empty-to-playing transition needs focus.
+                if oldID == nil {
+                    interaction.showControls()
                     pendingPlaybackFocusTrackID = newID
                 }
                 markInteraction()
             } else if newID == nil {
-                focusedQueueID = nil
                 requestEmptyPlayerFocus()
             }
         }
@@ -142,11 +163,6 @@ struct NowPlayingView: View {
             }
             if focus != .immersive {
                 markInteraction()
-            }
-        }
-        .onChange(of: focusedQueueID) { _, trackID in
-            if trackID != nil {
-                modeFocusFallback = nil
             }
         }
         .onChange(of: player.isPlaying) { _, playing in
@@ -213,43 +229,106 @@ struct NowPlayingView: View {
     }
 
     private var emptyPlayer: some View {
-        ZStack {
-            if player.isLoadingPersonalFM {
-                VStack(spacing: 22) {
+        VStack(spacing: 0) {
+            Spacer(minLength: 0)
+
+            ZStack {
+                RoundedRectangle(cornerRadius: 28, style: .continuous)
+                    .fill(
+                        LinearGradient(
+                            colors: [Color.white.opacity(0.16), Color.white.opacity(0.05)],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+                    )
+                RoundedRectangle(cornerRadius: 28, style: .continuous)
+                    .stroke(Color.white.opacity(0.10), lineWidth: 1)
+                if player.isLoadingPersonalFM {
                     ProgressView()
                         .controlSize(.large)
-                    Text("正在为你挑选音乐…")
-                        .font(.system(size: 42, weight: .bold, design: .rounded))
-                    Text("私人 FM 会根据你的听歌偏好持续更新。")
-                        .font(.title3)
-                        .foregroundStyle(TVTheme.secondaryText)
+                } else {
+                    Image(systemName: player.source == .personalFM ? "dot.radiowaves.left.and.right" : "music.note")
+                        .font(.system(size: 96, weight: .medium))
+                        .foregroundStyle(.white.opacity(0.42))
                 }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else if player.source == .personalFM {
-                EmptyStateView(
-                    title: "私人 FM 暂时没有新推荐",
-                    message: "稍后回到首页再试一次。",
-                    symbol: "dot.radiowaves.left.and.right"
-                )
-            } else {
-                EmptyStateView(
-                    title: "还没有正在播放的音乐",
-                    message: "从歌曲、专辑或歌单中选择一首开始播放。",
-                    symbol: "music.note"
-                )
             }
+            .frame(width: 320, height: 320)
+            .shadow(color: .black.opacity(0.34), radius: 30, y: 16)
 
-            VStack {
-                Spacer()
-                Button("返回", action: onDismiss)
-                    .buttonStyle(TVPillButtonStyle())
-                    .focused($focusedControl, equals: .emptyReturn)
-                    .prefersDefaultFocus(true, in: focusScope)
-                    .accessibilityHint("返回之前的标签页")
+            Text(emptyTitle)
+                .font(.system(size: 52, weight: .bold, design: .rounded))
+                .padding(.top, 46)
+
+            Text(emptyMessage)
+                .font(.system(size: 28, weight: .medium, design: .rounded))
+                .foregroundStyle(TVTheme.secondaryText)
+                .multilineTextAlignment(.center)
+                .padding(.top, 14)
+
+            HStack(spacing: 24) {
+                if !player.isLoadingPersonalFM {
+                    if player.source != .personalFM, !player.recentTracks.isEmpty {
+                        Button {
+                            player.play(player.recentTracks, source: .recent)
+                        } label: {
+                            Label("播放最近听过", systemImage: "clock.arrow.circlepath")
+                        }
+                        .buttonStyle(TVPillButtonStyle(prominent: emptyPrimaryFocus == .emptyResume))
+                        .focused($focusedControl, equals: .emptyResume)
+                        .prefersDefaultFocus(emptyPrimaryFocus == .emptyResume, in: focusScope)
+                    }
+
+                    if account.isLoggedIn {
+                        Button {
+                            player.startPersonalFM()
+                        } label: {
+                            Label(
+                                player.source == .personalFM ? "重试私人 FM" : "私人 FM",
+                                systemImage: "dot.radiowaves.left.and.right"
+                            )
+                        }
+                        .buttonStyle(TVPillButtonStyle(prominent: emptyPrimaryFocus == .emptyFM))
+                        .focused($focusedControl, equals: .emptyFM)
+                        .prefersDefaultFocus(emptyPrimaryFocus == .emptyFM, in: focusScope)
+                    }
+                }
+
+                Button(action: onDismiss) {
+                    Label("返回", systemImage: "chevron.backward")
+                }
+                .buttonStyle(TVPillButtonStyle())
+                .focused($focusedControl, equals: .emptyReturn)
+                .prefersDefaultFocus(emptyPrimaryFocus == .emptyReturn, in: focusScope)
+                .accessibilityLabel("返回")
+                .accessibilityHint("返回之前的标签页")
             }
-            .padding(.bottom, 34)
+            .labelStyle(.titleAndIcon)
+            .padding(.top, 52)
+            .focusSection()
+
+            Spacer(minLength: 0)
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .padding(76)
+    }
+
+    private var emptyTitle: String {
+        if player.isLoadingPersonalFM { return "正在为你挑选音乐…" }
+        if player.source == .personalFM { return "私人 FM 暂时没有新推荐" }
+        return "未在播放"
+    }
+
+    private var emptyMessage: String {
+        if player.isLoadingPersonalFM { return "私人 FM 会根据你的听歌偏好持续更新。" }
+        if player.source == .personalFM { return "稍后再试一次，或先从资料库挑一首歌。" }
+        return "从歌单、专辑或推荐中选择一首歌开始播放。"
+    }
+
+    private var emptyPrimaryFocus: NowPlayingFocus {
+        guard !player.isLoadingPersonalFM else { return .emptyReturn }
+        if player.source != .personalFM, !player.recentTracks.isEmpty { return .emptyResume }
+        if account.isLoggedIn { return .emptyFM }
+        return .emptyReturn
     }
 
     private var header: some View {
@@ -279,57 +358,56 @@ struct NowPlayingView: View {
                     .foregroundStyle(.white.opacity(0.72))
             }
         }
-        .frame(height: 56)
+        .frame(height: 44)
         .opacity(interaction.showsControls ? 1 : 0)
         .allowsHitTesting(false)
     }
 
     private var immersiveSurface: some View {
-        Button(action: handleImmersiveSelection) {
-            Color.clear
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(NowPlayingImmersiveButtonStyle())
+        ImmersivePlaybackControl(onSelect: handleImmersiveSelection,
+                                 onMove: handleImmersiveMove, onSkip: handleImmersiveSkip,
+                                 onFocusReleased: { restoreControlsAfterNativeFocus(.play) })
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .focused($focusedControl, equals: .immersive)
         .prefersDefaultFocus(!interaction.showsControls, in: focusScope)
-        .onMoveCommand(perform: handleImmersiveMove)
         .accessibilityLabel("播放中")
         .accessibilityHint(
             interaction.chromeMode == .lyricsNavigation
                 ? "上下选择歌词，点按跳转播放"
-                : "点按显示控制"
+                : "点按显示控制，长按左键上一首，长按右键下一首"
         )
     }
 
     private var stage: some View {
-        let showsLyrics = expandsStage && interaction.panel == .lyrics
+        let showsLyrics = expandsStage && interaction.contentPanel == .lyrics
         let showsQueue = expandsStage && interaction.panel == .queue
-        return Group {
+        return ZStack {
+            HStack(alignment: .center, spacing: 70) {
+                artworkAndMetadata(size: showsLyrics ? 500 : 520)
+
+                if showsLyrics {
+                    lyricsPanel
+                        .accessibilityIdentifier("now-playing-lyrics-panel")
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .focusSection()
+                        .transition(.move(edge: .trailing).combined(with: .opacity))
+                }
+            }
+            .frame(maxWidth: .infinity)
+            .opacity(showsQueue ? 0 : 1)
+            .disabled(showsQueue)
+            .accessibilityHidden(showsQueue)
             if showsQueue {
                 queuePanel
                     .accessibilityIdentifier("now-playing-queue-panel")
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .transition(.opacity.combined(with: .scale(scale: 0.985)))
-            } else {
-                HStack(alignment: .center, spacing: 70) {
-                    artworkAndMetadata(size: showsLyrics ? 500 : 560)
-
-                    if showsLyrics {
-                        lyricsPanel
-                            .accessibilityIdentifier("now-playing-lyrics-panel")
-                            .frame(maxWidth: .infinity, maxHeight: .infinity)
-                            .focusSection()
-                            .transition(.move(edge: .trailing).combined(with: .opacity))
-                    }
-                }
-                .frame(maxWidth: .infinity)
+                    .transition(.opacity)
             }
         }
         .frame(maxWidth: .infinity)
         .padding(.top, 4)
         .padding(.bottom, 8)
-        .frame(height: 650)
+        .frame(height: stageHeight)
         .offset(y: interaction.showsControls ? 0 : 30)
         .scaleEffect(interaction.showsControls ? 1 : 1.018)
         .animation(
@@ -346,118 +424,110 @@ struct NowPlayingView: View {
         )
     }
 
+    private var stageHeight: CGFloat { 700 }
+
     private func artworkAndMetadata(size: CGFloat) -> some View {
-        VStack(alignment: .center, spacing: 14) {
-            ArtworkView(url: player.currentTrack?.artworkURL, cornerRadius: 25)
+        VStack(alignment: .center, spacing: 0) {
+            ArtworkView(url: player.currentTrack?.artworkURL, cornerRadius: 26)
                 .frame(width: size, height: size)
-                .shadow(color: .black.opacity(0.56), radius: 38, y: 20)
+                .shadow(color: .black.opacity(0.52), radius: 40, y: 22)
 
-            Text(player.currentTrack?.name ?? "")
-                .font(.system(size: 31, weight: .bold, design: .rounded))
-                .lineLimit(1)
-                .minimumScaleFactor(0.72)
-                .frame(maxWidth: .infinity, alignment: .center)
+            VStack(spacing: 6) {
+                Text(player.currentTrack?.name ?? "")
+                    .accessibilityIdentifier("now-playing-track-title")
+                    .font(.system(size: 42, weight: .bold, design: .rounded))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
 
-            metadataLinks
-                .frame(maxWidth: .infinity, alignment: .center)
+                if let artistNames = player.currentTrack?.artistNames, !artistNames.isEmpty {
+                    Text(artistNames)
+                        .font(.system(size: 30, weight: .medium, design: .rounded))
+                        .foregroundStyle(.white.opacity(0.72))
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.75)
+                }
+
+                if let album = navigableAlbum {
+                    Text(album.name)
+                        .font(.system(size: 25, weight: .regular, design: .rounded))
+                        .foregroundStyle(.white.opacity(0.48))
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.75)
+                }
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.top, 30)
         }
-        .frame(width: size)
-    }
-
-    @ViewBuilder
-    private var metadataLinks: some View {
-        let artistNames = player.currentTrack?.artistNames ?? ""
-        if !artistNames.isEmpty, let album = navigableAlbum {
-            (
-                Text(artistNames).foregroundColor(.white.opacity(0.66))
-                    + Text("  ·  ").foregroundColor(.white.opacity(0.34))
-                    + Text(album.name).foregroundColor(.white.opacity(0.48))
-            )
-            .font(.system(size: 19, weight: .semibold, design: .rounded))
-            .lineLimit(1)
-            .minimumScaleFactor(0.72)
-        } else if !artistNames.isEmpty {
-            Text(artistNames)
-                .font(.system(size: 19, weight: .semibold, design: .rounded))
-                .foregroundStyle(.white.opacity(0.66))
-                .lineLimit(1)
-                .minimumScaleFactor(0.72)
-        } else if let album = navigableAlbum {
-            Text(album.name)
-                .font(.system(size: 19, weight: .semibold, design: .rounded))
-                .foregroundStyle(.white.opacity(0.52))
-                .lineLimit(1)
-                .minimumScaleFactor(0.72)
-        }
+        .frame(width: size + 120)
     }
 
     @ViewBuilder
     private var songActions: some View {
         if let track = player.currentTrack {
             HStack(spacing: 10) {
-                if interaction.panel == .queue, player.source != .personalFM {
-                    Button(action: player.toggleShuffle) {
-                        Image(systemName: "shuffle")
-                    }
-                    .buttonStyle(NowPlayingActionButtonStyle(size: 62, active: player.shuffleEnabled))
-                    .focused($focusedControl, equals: .shuffle)
-                    .accessibilityLabel(player.shuffleEnabled ? "关闭随机播放" : "开启随机播放")
-                    .disabled(!interaction.showsControls)
-
-                    Button(action: player.cycleRepeat) {
-                        Image(systemName: player.repeatMode == .one ? "repeat.1" : "repeat")
-                    }
-                    .buttonStyle(NowPlayingActionButtonStyle(size: 62, active: player.repeatMode != .off))
-                    .focused($focusedControl, equals: .repeatMode)
-                    .accessibilityLabel(repeatAccessibilityLabel)
-                    .disabled(!interaction.showsControls)
-                }
-
-                if player.source == .personalFM {
-                    Button {
-                        player.dislikeCurrentFM()
-                    } label: {
-                        Image(systemName: "hand.thumbsdown.fill")
-                    }
-                    .buttonStyle(NowPlayingActionButtonStyle(size: 62))
-                    .focused($focusedControl, equals: .fmDislike)
-                    .disabled(!interaction.showsControls)
-                    .accessibilityLabel("减少类似推荐并播放下一首")
-                }
+                songInfoButton
 
                 Button {
                     Task { await account.toggleLike(track) }
                 } label: {
                     Image(systemName: account.isLiked(track) ? "star.fill" : "star")
                 }
-                .buttonStyle(NowPlayingActionButtonStyle(size: 62, active: account.isLiked(track)))
+                .buttonStyle(NowPlayingGlyphButtonStyle(active: account.isLiked(track)))
                 .focused($focusedControl, equals: .favorite)
+                .prefersDefaultFocus(requestedControlFocus == .favorite, in: focusScope)
                 .disabled(!interaction.showsControls)
                 .accessibilityLabel(account.isLiked(track) ? "取消喜欢" : "喜欢")
 
+                if player.source == .personalFM {
+                    Button {
+                        player.dislikeCurrentFM()
+                    } label: {
+                        Image(systemName: "hand.thumbsdown")
+                    }
+                    .buttonStyle(NowPlayingGlyphButtonStyle())
+                    .focused($focusedControl, equals: .fmDislike)
+                    .prefersDefaultFocus(requestedControlFocus == .fmDislike, in: focusScope)
+                    .disabled(!interaction.showsControls)
+                    .accessibilityLabel("减少类似推荐并播放下一首")
+                } else if let playlistID = intelligencePlaylistID {
+                    Button {
+                        toggleIntelligence(from: track, playlistID: playlistID)
+                    } label: {
+                        if player.isLoadingIntelligence {
+                            ProgressView().controlSize(.small)
+                        } else {
+                            Image(systemName: player.isIntelligenceActive ? "bolt.heart.fill" : "bolt.heart")
+                        }
+                    }
+                    .buttonStyle(NowPlayingGlyphButtonStyle(active: player.isIntelligenceActive))
+                    .focused($focusedControl, equals: .intelligence)
+                    .prefersDefaultFocus(requestedControlFocus == .intelligence, in: focusScope)
+                    .disabled(!interaction.showsControls)
+                    .accessibilityLabel(player.isLoadingIntelligence ? "取消开启心动模式" :
+                                            (player.isIntelligenceActive ? "退出心动模式" : "从这首开启心动模式"))
+                }
+
                 moreActionsMenu(for: track)
             }
+            .nowPlayingControlGroup()
             .focusSection()
         }
     }
 
     private func moreActionsMenu(for track: Track) -> some View {
-        NowPlayingMoreActionsMenu(
-            track: track,
-            isLiked: account.isLiked(track),
-            ownedPlaylists: account.ownedPlaylists,
-            likedSongsPlaylistID: account.likedSongsPlaylist?.id,
-            sourcePlaylistID: player.source.playlistID,
-            album: navigableAlbum,
-            artists: navigableArtists,
-            isEnabled: interaction.showsControls,
-            focus: $focusedControl,
-            openDetail: openDetail
-        )
+        Button {
+            isMorePresented = true
+            markInteraction()
+        } label: { Image(systemName: "ellipsis") }
+        .buttonStyle(NowPlayingGlyphButtonStyle())
+        .focused($focusedControl, equals: .moreActions)
+        .prefersDefaultFocus(requestedControlFocus == .moreActions, in: focusScope)
+        .disabled(!interaction.showsControls)
+        .accessibilityLabel("更多操作")
     }
 
     private var lyricsPanel: some View {
-        let viewportHeight: CGFloat = interaction.showsControls ? 430 : 620
+        let viewportHeight: CGFloat = interaction.showsControls ? 480 : 680
         let verticalOffset: CGFloat = 150
 
         return Group {
@@ -479,7 +549,7 @@ struct NowPlayingView: View {
                 )
                 .frame(height: viewportHeight)
                 .offset(y: verticalOffset)
-                .frame(height: 650, alignment: .top)
+                .frame(height: stageHeight, alignment: .top)
             } else if player.isLoadingLyrics {
                 VStack(alignment: .leading, spacing: 20) {
                     ProgressView().controlSize(.large)
@@ -507,6 +577,7 @@ struct NowPlayingView: View {
                     }
                     .buttonStyle(TVPillButtonStyle(prominent: true))
                     .focused($focusedControl, equals: .lyricsRetry)
+                    .prefersDefaultFocus(requestedControlFocus == .lyricsRetry, in: focusScope)
                     .disabled(!interaction.showsControls)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -529,82 +600,21 @@ struct NowPlayingView: View {
     private var queuePanel: some View {
         VStack(alignment: .leading, spacing: 6) {
             queueHeader
-
-            Group {
-                if player.playbackQueue.isEmpty {
-                    EmptyStateView(
-                        title: "当前队列为空",
-                        message: "私人 FM 会按播放进度持续加入歌曲。",
-                        symbol: "text.line.first.and.arrowtriangle.forward"
-                    )
-                } else {
-                    ScrollViewReader { proxy in
-                        ScrollView(.horizontal, showsIndicators: false) {
-                            LazyHStack(alignment: .center, spacing: 30) {
-                                ForEach(Array(player.playbackQueue.enumerated()), id: \.element.id) { index, track in
-                                    Button {
-                                        player.playTrack(track)
-                                    } label: {
-                                        VStack(alignment: .leading, spacing: 12) {
-                                            ArtworkView(url: track.artworkURL, cornerRadius: 20)
-                                                .frame(width: 235, height: 235)
-                                            Text(track.name)
-                                                .font(.headline)
-                                                .lineLimit(1)
-                                            Text(track.artistNames)
-                                                .font(.caption)
-                                                .opacity(0.58)
-                                                .lineLimit(1)
-                                            HStack(spacing: 7) {
-                                                Text("\(index + 1)")
-                                                if player.currentTrack?.id == track.id {
-                                                    Circle().fill(TVTheme.accent).frame(width: 6, height: 6)
-                                                    Text("正在播放")
-                                                }
-                                            }
-                                            .font(.caption2.bold().monospacedDigit())
-                                            .opacity(0.54)
-                                        }
-                                        .frame(width: 235, alignment: .leading)
-                                    }
-                                    .buttonStyle(NowPlayingQueueCardStyle(isCurrent: player.currentTrack?.id == track.id))
-                                    .focused($focusedQueueID, equals: track.id)
-                                    .contextMenu {
-                                        if player.currentTrack?.id != track.id {
-                                            Button("从播放队列移除", role: .destructive) {
-                                                player.removeFromQueue(track)
-                                            }
-                                        }
-                                    }
-                                    .id(track.id)
-                                }
-                            }
-                            .padding(.horizontal, 34)
-                            .padding(.vertical, 42)
-                        }
-                        .onAppear {
-                            guard let currentID = player.currentTrack?.id else { return }
-                            proxy.scrollTo(currentID, anchor: .center)
-                        }
-                        .onChange(of: player.currentTrack?.id) { _, currentID in
-                            guard let currentID else { return }
-                            if reduceMotion {
-                                proxy.scrollTo(currentID, anchor: .center)
-                            } else {
-                                withAnimation(.easeInOut(duration: 0.28)) {
-                                    proxy.scrollTo(currentID, anchor: .center)
-                                }
-                            }
-                        }
-                    }
-                }
+            if player.playbackQueue.isEmpty {
+                EmptyStateView(title: "当前队列为空", message: "私人 FM 会按播放进度持续加入歌曲。",
+                               symbol: "text.line.first.and.arrowtriangle.forward")
+            } else {
+                PlaybackQueueView(tracks: player.playbackQueue,
+                                  currentID: player.currentTrack?.id,
+                                  focusRequest: queueFocusRequest,
+                                  onSelect: { player.playTrack($0) },
+                                  onRemove: { player.removeFromQueue($0) },
+                                  onFocusReleased: { restoreControlsAfterNativeFocus(.queueMode) })
+                    .focused($focusedControl, equals: .queue)
+                    .prefersDefaultFocus(requestedControlFocus == .queue, in: focusScope)
             }
         }
         .focusSection()
-        .onAppear {
-            guard interaction.panel == .queue else { return }
-            requestQueueFocus()
-        }
     }
 
     private var queueHeader: some View {
@@ -634,13 +644,7 @@ struct NowPlayingView: View {
     }
 
     private var playbackChrome: some View {
-        VStack(spacing: 7) {
-            HStack {
-                Spacer()
-                songActions
-            }
-            .frame(height: 68)
-
+        VStack(spacing: 16) {
             NowPlayingTimeline(
                 isEnabled: interaction.showsControls && isTimelineFocusEnabled,
                 onSeek: { time in
@@ -656,30 +660,24 @@ struct NowPlayingView: View {
             )
 
             HStack(spacing: 0) {
-                songInfoButton
+                songActions
+                    .frame(maxWidth: .infinity, alignment: .leading)
 
                 transportControls
 
-                HStack(spacing: 0) {
-                    Spacer(minLength: 0)
-                    HStack(spacing: 12) {
-                        panelButton(.lyrics, symbol: "quote.bubble.fill", focus: .lyricsMode, label: "歌词")
-                        panelButton(.queue, symbol: "list.bullet", focus: .queueMode, label: "播放队列")
-                    }
-                    .padding(8)
-                    .background(Color.white.opacity(0.11), in: Capsule())
-                    .overlay {
-                        Capsule().stroke(Color.white.opacity(0.09), lineWidth: 1)
-                    }
-                    .focusSection()
+                HStack(spacing: 12) {
+                    panelButton(.lyrics, symbol: "quote.bubble.fill", focus: .lyricsMode, label: "歌词")
+                    panelButton(.queue, symbol: "list.bullet", focus: .queueMode, label: "播放队列")
                 }
-                .frame(maxWidth: .infinity)
+                .nowPlayingControlGroup()
+                .focusSection()
+                .frame(maxWidth: .infinity, alignment: .trailing)
             }
-            .frame(height: 78)
+            .frame(height: 84)
         }
-        .padding(.top, 10)
+        .padding(.top, 8)
         .padding(.horizontal, 4)
-        .frame(height: 240)
+        .frame(height: 180)
         .opacity(interaction.showsControls ? 1 : 0)
         .allowsHitTesting(interaction.showsControls)
     }
@@ -687,29 +685,43 @@ struct NowPlayingView: View {
     private var songInfoButton: some View {
         Button {
             focusedControl = nil
-            focusedQueueID = nil
-            isInfoPresented = true
+                isInfoPresented = true
             markInteraction()
         } label: {
-            Text("信息")
+            Image(systemName: "info.circle")
         }
-        .buttonStyle(NowPlayingInfoButtonStyle())
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .buttonStyle(NowPlayingGlyphButtonStyle())
         .focused($focusedControl, equals: .info)
+        .prefersDefaultFocus(requestedControlFocus == .info, in: focusScope)
         .disabled(!interaction.showsControls)
         .accessibilityLabel("查看歌曲信息")
     }
 
     private var transportControls: some View {
-        HStack(spacing: 20) {
+        HStack(spacing: 22) {
+            if player.source != .personalFM {
+                Button {
+                    player.toggleShuffle()
+                    markInteraction()
+                } label: {
+                    Image(systemName: "shuffle")
+                }
+                .buttonStyle(TVPlaybackButtonStyle(size: 54, active: player.shuffleEnabled))
+                .focused($focusedControl, equals: .shuffle)
+                .prefersDefaultFocus(requestedControlFocus == .shuffle, in: focusScope)
+                .accessibilityLabel(player.shuffleEnabled ? "关闭随机播放" : "开启随机播放")
+                .disabled(!interaction.showsControls)
+            }
+
             Button {
                 player.previous()
                 markInteraction()
             } label: {
                 Image(systemName: "backward.fill")
             }
-            .buttonStyle(TVPlaybackButtonStyle(size: 58))
+            .buttonStyle(TVPlaybackButtonStyle(size: 60))
             .focused($focusedControl, equals: .previous)
+            .prefersDefaultFocus(requestedControlFocus == .previous, in: focusScope)
             .accessibilityLabel("上一首")
             .disabled(!player.canGoPrevious || !interaction.showsControls)
 
@@ -725,12 +737,16 @@ struct NowPlayingView: View {
                         Image(systemName: player.isPlaying ? "pause.fill" : "play.fill")
                     }
                 }
-                .frame(width: 34, height: 34)
+                .frame(width: 36, height: 36)
             }
-            .buttonStyle(TVPlaybackButtonStyle(size: 66, prominent: true))
+            .buttonStyle(TVPlaybackButtonStyle(size: 72, prominent: true))
+            // Re-register the default focus item when controls are revealed;
+            // keep its identity when songs or playback modes change.
+            .id(interaction.showsControls)
             .focused($focusedControl, equals: .play)
-            .prefersDefaultFocus(initialControlFocus == .play, in: focusScope)
+            .prefersDefaultFocus(requestedControlFocus == .play, in: focusScope)
             .accessibilityLabel(player.isPlaying ? "暂停" : "播放")
+            .disabled(!interaction.showsControls)
 
             Button {
                 player.next()
@@ -738,12 +754,28 @@ struct NowPlayingView: View {
             } label: {
                 Image(systemName: "forward.fill")
             }
-            .buttonStyle(TVPlaybackButtonStyle(size: 58))
+            .buttonStyle(TVPlaybackButtonStyle(size: 60))
             .focused($focusedControl, equals: .next)
+            .prefersDefaultFocus(requestedControlFocus == .next, in: focusScope)
             .accessibilityLabel("下一首")
             .disabled(!player.canGoNext || !interaction.showsControls)
+
+            if player.source != .personalFM {
+                Button {
+                    player.cycleRepeat()
+                    markInteraction()
+                } label: {
+                    Image(systemName: player.repeatMode == .one ? "repeat.1" : "repeat")
+                }
+                .buttonStyle(TVPlaybackButtonStyle(size: 54, active: player.repeatMode != .off))
+                .focused($focusedControl, equals: .repeatMode)
+                .prefersDefaultFocus(requestedControlFocus == .repeatMode, in: focusScope)
+                .accessibilityLabel(repeatAccessibilityLabel)
+                .disabled(!interaction.showsControls)
+            }
         }
-        .frame(width: 238, height: 74)
+        .fixedSize()
+        .padding(.horizontal, 28)
         .focusSection()
     }
 
@@ -785,6 +817,7 @@ struct NowPlayingView: View {
             )
         )
         .focused($focusedControl, equals: focus)
+        .prefersDefaultFocus(requestedControlFocus == focus, in: focusScope)
         .overlay {
             if modeFocusFallback == focus {
                 Image(systemName: symbol)
@@ -811,6 +844,23 @@ struct NowPlayingView: View {
             showControls(preferredFocus: .play)
         }
         markInteraction()
+    }
+
+    private func handleImmersiveSkip(_ direction: MoveCommandDirection) {
+        guard !interaction.showsControls else { return }
+        if direction == .left { player.previous(restartCurrent: false) }
+        if direction == .right { player.next() }
+        interaction.clearLyricSelection()
+        markInteraction()
+    }
+
+    private func closeMoreActions() {
+        isMorePresented = false
+        markInteraction()
+        Task { @MainActor in
+            await Task.yield()
+            requestControlFocus(.moreActions)
+        }
     }
 
     private func handleImmersiveMove(_ direction: MoveCommandDirection) {
@@ -845,13 +895,20 @@ struct NowPlayingView: View {
     }
 
     private func requestControlFocus(_ target: NowPlayingFocus) {
-        focusedQueueID = nil
-        focusedControl = target
+        requestedControlFocus = target
+        focusedControl = nil
         Task { @MainActor in
             await Task.yield()
-            guard isActive, focusedControl == target else { return }
+            guard isActive, requestedControlFocus == target else { return }
+            focusedControl = target
             resetFocus(in: focusScope)
         }
+    }
+
+    private func restoreControlsAfterNativeFocus(_ target: NowPlayingFocus) {
+        guard isActive, player.currentTrack != nil, interaction.showsControls,
+              interaction.panel != .queue, !isMorePresented, !isInfoPresented else { return }
+        requestControlFocus(target)
     }
 
     @MainActor
@@ -869,7 +926,6 @@ struct NowPlayingView: View {
 
     private func showControls(preferredFocus: NowPlayingFocus? = nil) {
         interaction.showControls()
-        focusedQueueID = nil
         focusedControl = nil
         guard let preferredFocus else {
             isTimelineFocusEnabled = true
@@ -889,32 +945,17 @@ struct NowPlayingView: View {
     }
 
     private func requestQueueFocus(_ requestedTrackID: Int? = nil) {
-        let currentTrackID = player.currentTrack.flatMap { currentTrack in
-            player.playbackQueue.contains(where: { $0.id == currentTrack.id }) ? currentTrack.id : nil
-        }
-        let target = requestedTrackID
-            .flatMap { requestedID in
-                player.playbackQueue.contains(where: { $0.id == requestedID }) ? requestedID : nil
-            }
-            ?? currentTrackID
-            ?? player.playbackQueue.first?.id
-        guard let target else {
+        let tracks = player.playbackQueue
+        let target = requestedTrackID ?? player.currentTrack?.id ?? tracks.first?.id
+        guard let target, tracks.contains(where: { $0.id == target }) else {
             requestControlFocus(.queueMode)
             return
         }
-
-        Task { @MainActor in
-            await Task.yield()
-            guard interaction.panel == .queue else { return }
-            focusedControl = nil
-            focusedQueueID = target
-            resetFocus(in: focusScope)
-        }
-    }
-
-    private var initialControlFocus: NowPlayingFocus {
-        guard player.currentTrack != nil else { return .emptyReturn }
-        return .play
+        requestedControlFocus = .queue
+        focusedControl = .queue
+        modeFocusFallback = nil
+        queueFocusGeneration &+= 1
+        queueFocusRequest = PlaybackQueueFocusRequest(trackID: target, generation: queueFocusGeneration)
     }
 
     private var repeatAccessibilityLabel: String {
@@ -939,7 +980,24 @@ struct NowPlayingView: View {
         return album
     }
 
+    private var intelligencePlaylistID: Int? {
+        guard let track = player.currentTrack, player.source != .personalFM else { return nil }
+        if case .intelligence(let playlistID) = player.source { return playlistID }
+        guard !track.noCopyright else { return nil }
+        return account.likedSongsPlaylist?.id
+    }
+
+    private func toggleIntelligence(from track: Track, playlistID: Int) {
+        if player.isIntelligenceActive || player.isLoadingIntelligence {
+            player.stopIntelligence()
+        } else {
+            player.startIntelligence(from: track, playlistID: playlistID)
+        }
+        markInteraction()
+    }
+
     private func handlePlayerExit() {
+        if isMorePresented { closeMoreActions(); return }
         if isInfoPresented {
             closeInfoPanel()
             return
@@ -963,7 +1021,6 @@ struct NowPlayingView: View {
 
     private func openDetail(_ route: AppRoute) {
         focusedControl = nil
-        focusedQueueID = nil
         openRouteFromNowPlaying?(route)
     }
 
@@ -971,11 +1028,13 @@ struct NowPlayingView: View {
     private func activatePlayerIfNeeded() async {
         guard isActive else { return }
         interaction.activate()
-        expandsStage = reduceMotion && interaction.panel != .artwork
+        // The presentation transition already animates entry; a second delayed
+        // layout change made the page feel like it settled twice.
+        expandsStage = interaction.panel != .artwork
         isInfoPresented = false
         isTimelineFocusEnabled = true
-        focusedQueueID = nil
         focusedControl = nil
+        requestedControlFocus = .play
         await Task.yield()
         guard !Task.isCancelled, isActive else { return }
         guard player.currentTrack != nil else {
@@ -990,14 +1049,16 @@ struct NowPlayingView: View {
 
     @MainActor
     private func expandStageIfNeeded() async {
-        guard interaction.panel != .artwork, !reduceMotion else { return }
-        try? await Task.sleep(for: .milliseconds(420))
-        guard !Task.isCancelled,
+        guard !expandsStage,
               isActive,
               player.currentTrack != nil,
               interaction.panel != .artwork else { return }
-        withAnimation(.spring(response: 0.72, dampingFraction: 0.88)) {
+        if reduceMotion {
             expandsStage = true
+        } else {
+            withAnimation(.spring(response: 0.72, dampingFraction: 0.88)) {
+                expandsStage = true
+            }
         }
     }
 
@@ -1018,6 +1079,7 @@ struct NowPlayingView: View {
               interaction.showsControls,
               interaction.panel != .queue,
               !isInfoPresented,
+              !isMorePresented,
               player.currentTrack != nil,
               player.isPlaying,
               focusedControl != .moreActions else { return }
@@ -1027,6 +1089,7 @@ struct NowPlayingView: View {
               interaction.showsControls,
               interaction.panel != .queue,
               !isInfoPresented,
+              !isMorePresented,
               player.isPlaying,
               focusedControl != .moreActions else { return }
         interaction.hideControlsForIdle()
@@ -1041,14 +1104,13 @@ struct NowPlayingView: View {
         Task { @MainActor in
             await Task.yield()
             guard isActive, player.currentTrack == nil else { return }
-            focusedControl = .emptyReturn
+            focusedControl = emptyPrimaryFocus
             resetFocus(in: focusScope)
         }
     }
 
     private func closeInfoPanel() {
         focusedControl = nil
-        focusedQueueID = nil
         isInfoPresented = false
         markInteraction()
         Task { @MainActor in
@@ -1093,12 +1155,6 @@ private struct NowPlayingExitCommand: ViewModifier {
     }
 }
 
-private struct NowPlayingImmersiveButtonStyle: ButtonStyle {
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-    }
-}
-
 private enum NowPlayingInfoFocus: Hashable {
     case artist(Int)
     case album
@@ -1120,53 +1176,64 @@ private struct NowPlayingInfoPanel: View {
     @FocusState private var focusedAction: NowPlayingInfoFocus?
 
     var body: some View {
-        HStack(alignment: .center, spacing: 28) {
+        HStack(alignment: .center, spacing: 30) {
             ArtworkView(url: track.artworkURL, cornerRadius: 16)
-                .frame(width: 158, height: 158)
+                .frame(width: 132, height: 132)
                 .shadow(color: .black.opacity(0.32), radius: 18, y: 9)
 
-            VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: 6) {
                 Text(track.name)
-                    .font(.system(size: 31, weight: .bold, design: .rounded))
+                    .font(.system(size: 36, weight: .bold, design: .rounded))
                     .lineLimit(1)
 
-                Text(metadataSummary)
-                    .font(.system(size: 22, weight: .semibold, design: .rounded))
-                    .foregroundStyle(.white.opacity(0.72))
-                    .lineLimit(1)
-
-                Text(DisplayFormatter.duration(duration))
-                    .font(.system(size: 21, weight: .semibold, design: .rounded).monospacedDigit())
-                    .foregroundStyle(.white.opacity(0.68))
-
-                if let playbackBadge {
-                    Text(playbackBadge)
-                        .font(.caption.bold())
-                        .padding(.horizontal, 11)
-                        .padding(.vertical, 5)
-                        .foregroundStyle(.white.opacity(0.78))
-                        .background(Color.white.opacity(0.10), in: Capsule())
+                if !track.artistNames.isEmpty {
+                    Text(track.artistNames)
+                        .font(.system(size: 27, weight: .medium, design: .rounded))
+                        .foregroundStyle(.white.opacity(0.74))
+                        .lineLimit(1)
                 }
+
+                HStack(spacing: 12) {
+                    Text(metadataSummary)
+                        .lineLimit(1)
+                    if let playbackBadge {
+                        Text(playbackBadge)
+                            .font(.system(size: 19, weight: .bold, design: .rounded))
+                            .padding(.horizontal, 11)
+                            .padding(.vertical, 4)
+                            .foregroundStyle(.white.opacity(0.82))
+                            .background(Color.white.opacity(0.12), in: Capsule())
+                            .fixedSize()
+                    }
+                }
+                .font(.system(size: 23, weight: .medium, design: .rounded).monospacedDigit())
+                .foregroundStyle(.white.opacity(0.52))
             }
             .frame(maxWidth: .infinity, alignment: .leading)
 
-            VStack(spacing: 12) {
+            HStack(spacing: 20) {
                 if let album {
-                    Button("前往专辑") {
+                    Button {
                         openAlbum(album)
+                    } label: {
+                        Label("前往专辑", systemImage: "square.stack")
                     }
                     .buttonStyle(NowPlayingInfoDestinationButtonStyle())
                     .focused($focusedAction, equals: .album)
                     .prefersDefaultFocus(preferredFocus == .album, in: focusScope)
+                    .accessibilityLabel("前往专辑")
                 }
 
                 if artists.count == 1, let artist = artists.first {
-                    Button("前往艺人") {
+                    Button {
                         openArtist(artist)
+                    } label: {
+                        Label("前往艺人", systemImage: "music.mic")
                     }
                     .buttonStyle(NowPlayingInfoDestinationButtonStyle())
                     .focused($focusedAction, equals: .artist(artist.id))
                     .prefersDefaultFocus(preferredFocus == .artist(artist.id), in: focusScope)
+                    .accessibilityLabel("前往艺人")
                 } else if artists.count > 1, let firstArtist = artists.first {
                     Menu {
                         ForEach(artists) { artist in
@@ -1175,7 +1242,7 @@ private struct NowPlayingInfoPanel: View {
                             }
                         }
                     } label: {
-                        Text("前往艺人")
+                        Label("前往艺人", systemImage: "music.mic")
                     }
                     .buttonStyle(NowPlayingInfoDestinationButtonStyle())
                     .focused($focusedAction, equals: .artist(firstArtist.id))
@@ -1183,16 +1250,11 @@ private struct NowPlayingInfoPanel: View {
                     .accessibilityLabel("选择要前往的艺人")
                 }
             }
-            .frame(width: 340)
             .focusSection()
         }
-        .padding(.horizontal, 24)
-        .frame(height: 240)
-        .background(Color.black.opacity(0.12), in: RoundedRectangle(cornerRadius: 30, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: 30, style: .continuous)
-                .stroke(Color.white.opacity(0.07), lineWidth: 1)
-        }
+        .padding(.horizontal, 26)
+        .frame(height: 180)
+        .glassPanel(cornerRadius: 32)
         .focusScope(focusScope)
         .task {
             guard let preferredFocus else { return }
@@ -1205,11 +1267,9 @@ private struct NowPlayingInfoPanel: View {
     }
 
     private var metadataSummary: String {
-        let artist = track.artistNames
-        let album = track.album.name
-        if artist.isEmpty { return album }
-        if album.isEmpty { return artist }
-        return "\(artist) — \(album)"
+        [track.album.name, DisplayFormatter.duration(duration)]
+            .filter { !$0.isEmpty }
+            .joined(separator: "  ·  ")
     }
 
     private var preferredFocus: NowPlayingInfoFocus? {
@@ -1583,109 +1643,156 @@ private final class TVSeekControl: UIControl {
     }
 }
 
-private struct NowPlayingMoreActionsMenu: View {
+private struct NowPlayingMoreActionsPanel: View {
     @Environment(AccountStore.self) private var account
-    @Environment(PlayerService.self) private var player
+    @Namespace private var menuScope
+    @State private var page = Page.actions
+    @FocusState private var focusedItem: String?
 
+    private enum Page { case actions, playlists, artists }
     let track: Track
     let isLiked: Bool
     let ownedPlaylists: [PlaylistSummary]
-    let likedSongsPlaylistID: Int?
     let sourcePlaylistID: Int?
     let album: AlbumRef?
     let artists: [ArtistRef]
-    let isEnabled: Bool
-    let focus: FocusState<NowPlayingFocus?>.Binding
+    let close: () -> Void
     let openDetail: (AppRoute) -> Void
 
     var body: some View {
-        Menu {
-            Button(isLiked ? "取消喜欢" : "喜欢") {
-                Task { await account.toggleLike(track) }
-            }
-
-            if !ownedPlaylists.isEmpty {
-                Menu("添加到歌单") {
-                    ForEach(ownedPlaylists) { playlist in
-                        Button(playlist.name) {
-                            Task { await account.add(track, to: playlist) }
+        ZStack(alignment: .trailing) {
+            Color.black.opacity(0.52).ignoresSafeArea()
+            VStack(alignment: .leading, spacing: 22) {
+                Text(page == .playlists ? "添加到歌单" : (page == .artists ? "查看歌手" : "更多操作"))
+                    .font(.system(size: 36, weight: .bold))
+                Text(track.name).font(.title3).foregroundStyle(.secondary).lineLimit(1)
+                ScrollView {
+                    VStack(spacing: 12) {
+                        if page == .playlists {
+                            ForEach(ownedPlaylists) { playlist in
+                                item(playlist.name, id: "playlist-\(playlist.id)", symbol: "music.note.list") {
+                                    Task { await account.add(track, to: playlist) }
+                                    close()
+                                }
+                            }
+                        } else if page == .artists {
+                            ForEach(artists) { artist in
+                                item(artist.name, id: "artist-\(artist.id)", symbol: "person") { openDetail(.artist(artist.id)) }
+                            }
+                        } else {
+                            item(isLiked ? "取消喜欢" : "喜欢", id: "like", symbol: "star") {
+                                Task { await account.toggleLike(track) }
+                                close()
+                            }
+                            if !ownedPlaylists.isEmpty {
+                                item("添加到歌单", id: "add-playlist", symbol: "text.badge.plus", submenu: true) {
+                                    show(.playlists)
+                                }
+                                .onMoveCommand { if $0 == .right { show(.playlists) } }
+                            }
+                            if let album {
+                                item("查看专辑《\(album.name)》", id: "album", symbol: "square.stack") { openDetail(.album(album.id)) }
+                            }
+                            if artists.count == 1, let artist = artists.first {
+                                item("查看歌手“\(artist.name)”", id: "artist", symbol: "person") { openDetail(.artist(artist.id)) }
+                            } else if artists.count > 1 {
+                                item("查看歌手", id: "artists", symbol: "person", submenu: true) { show(.artists) }
+                                    .onMoveCommand { if $0 == .right { show(.artists) } }
+                            }
+                            if let sourcePlaylistID,
+                               let playlist = ownedPlaylists.first(where: { $0.id == sourcePlaylistID }) {
+                                item("从《\(playlist.name)》中移除", id: "remove", symbol: "minus.circle") {
+                                    Task { await account.remove(track, from: playlist) }
+                                    close()
+                                }
+                            }
                         }
                     }
+                    .padding(16)
                 }
+                Text(page == .actions ? "按右键或确认键展开 · 返回键关闭" : "按左键或返回键返回")
+                    .font(.caption).foregroundStyle(.secondary)
             }
-
-            if let sourcePlaylistID,
-               sourcePlaylistID == likedSongsPlaylistID,
-               !track.noCopyright {
-                Button("从这首开启心动模式") {
-                    player.startIntelligence(from: track, playlistID: sourcePlaylistID)
-                }
-            }
-
-            if album != nil || !artists.isEmpty {
-                Divider()
-            }
-
-            if let album {
-                Button("查看专辑《\(album.name)》") {
-                    openDetail(.album(album.id))
-                }
-            }
-
-            if artists.count == 1, let artist = artists.first {
-                Button("查看歌手“\(artist.name)”") {
-                    openDetail(.artist(artist.id))
-                }
-            } else if artists.count > 1 {
-                Menu("查看歌手") {
-                    ForEach(artists) { artist in
-                        Button(artist.name) {
-                            openDetail(.artist(artist.id))
-                        }
-                    }
-                }
-            }
-
-            if let sourcePlaylistID,
-               let playlist = ownedPlaylists.first(where: { $0.id == sourcePlaylistID }) {
-                Divider()
-                Button("从《\(playlist.name)》中移除", role: .destructive) {
-                    Task { await account.remove(track, from: playlist) }
-                }
-            }
-        } label: {
-            Image(systemName: "ellipsis")
+            .padding(30)
+            .frame(width: 680, height: 720)
+            .glassPanel(cornerRadius: 30)
+            .padding(.trailing, 76)
         }
-        .buttonStyle(NowPlayingActionButtonStyle(size: 62))
-        .focused(focus, equals: .moreActions)
-        .disabled(!isEnabled)
-        .accessibilityLabel("更多操作")
+        .focusScope(menuScope)
+        .accessibilityIdentifier("now-playing-more-panel")
+        .onExitCommand(perform: back)
+        .onMoveCommand { if $0 == .left, page != .actions { back() } }
+        .task { focusedItem = "like" }
+    }
+
+    private func item(_ title: String, id: String, symbol: String,
+                      submenu: Bool = false, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 18) {
+                Image(systemName: symbol).frame(width: 32)
+                Text(title).lineLimit(2)
+                Spacer(minLength: 0)
+                if submenu { Image(systemName: "chevron.right") }
+            }
+            .font(.system(size: 27, weight: .medium))
+            .frame(maxWidth: .infinity, minHeight: 46, alignment: .leading)
+        }
+        .buttonStyle(TVCardButtonStyle(cornerRadius: 14, contentPadding: 18, focusedScale: 1.025))
+        .focused($focusedItem, equals: id)
+        .accessibilityIdentifier("player-menu-\(id)")
+    }
+
+    private func show(_ target: Page) {
+        page = target
+        Task { @MainActor in
+            await Task.yield()
+            focusedItem = target == .playlists ? ownedPlaylists.first.map { "playlist-\($0.id)" }
+                : artists.first.map { "artist-\($0.id)" }
+        }
+    }
+
+    private func back() {
+        guard page != .actions else { close(); return }
+        let target = page == .playlists ? "add-playlist" : "artists"
+        page = .actions
+        Task { @MainActor in
+            await Task.yield()
+            focusedItem = target
+        }
     }
 }
 
-private struct NowPlayingActionButtonStyle: ButtonStyle {
+/// Borderless glyph that only lifts into a white disc while focused.
+private struct NowPlayingGlyphButtonStyle: ButtonStyle {
     @Environment(\.isFocused) private var isFocused
     @Environment(\.isEnabled) private var isEnabled
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-    var size: CGFloat
+    var size: CGFloat = 62
     var active = false
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .font(.system(size: 26, weight: .semibold))
             .frame(width: size, height: size)
-            .foregroundStyle(isFocused ? Color.black : (active ? TVTheme.accent : Color.white.opacity(0.94)))
+            .foregroundStyle(active ? TVTheme.accent : (isFocused ? Color.black : Color.white.opacity(0.92)))
             .background {
-                Circle().fill(isFocused ? Color.white : Color.white.opacity(active ? 0.17 : 0.11))
+                Circle().fill(isFocused ? Color.white : Color.clear)
             }
-            .overlay {
-                Circle().stroke(Color.white.opacity(isFocused ? 0.92 : 0.09), lineWidth: isFocused ? 2.5 : 1)
-            }
-            .scaleEffect(isFocused && !reduceMotion ? 1.10 : (configuration.isPressed ? 0.95 : 1))
-            .shadow(color: .black.opacity(isFocused ? 0.36 : 0.10), radius: isFocused ? 16 : 7, y: 7)
-            .opacity(isEnabled ? 1 : 0.32)
+            .scaleEffect(isFocused && !reduceMotion ? 1.08 : (configuration.isPressed ? 0.95 : 1))
+            .shadow(color: .black.opacity(isFocused ? 0.30 : 0), radius: isFocused ? 14 : 0, y: 7)
+            .opacity(isEnabled ? 1 : 0.3)
             .animation(reduceMotion ? nil : .easeOut(duration: 0.14), value: isFocused)
+    }
+}
+
+private extension View {
+    func nowPlayingControlGroup() -> some View {
+        padding(8)
+            .background(Color.white.opacity(0.11), in: Capsule())
+            .overlay {
+                Capsule().stroke(Color.white.opacity(0.09), lineWidth: 1)
+            }
     }
 }
 
@@ -1721,70 +1828,19 @@ private struct NowPlayingInfoDestinationButtonStyle: ButtonStyle {
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .font(.system(size: 20, weight: .bold, design: .rounded))
-            .frame(maxWidth: .infinity)
-            .frame(height: 54)
-            .foregroundStyle(isFocused ? Color.black : Color.white.opacity(0.90))
-            .background(
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .fill(isFocused ? Color.white : Color.white.opacity(0.13))
-            )
+            .labelStyle(.titleAndIcon)
+            .font(.system(size: 26, weight: .semibold, design: .rounded))
+            .lineLimit(1)
+            .fixedSize()
+            .padding(.horizontal, 30)
+            .frame(height: 70)
+            .foregroundStyle(isFocused ? Color.black : Color.white.opacity(0.92))
+            .background(Capsule().fill(isFocused ? Color.white : Color.white.opacity(0.13)))
             .overlay {
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .stroke(Color.white.opacity(isFocused ? 0.92 : 0.08), lineWidth: isFocused ? 2 : 1)
-            }
-            .scaleEffect(isFocused && !reduceMotion ? 1.035 : (configuration.isPressed ? 0.98 : 1))
-            .animation(reduceMotion ? nil : .easeOut(duration: 0.14), value: isFocused)
-    }
-}
-
-private struct NowPlayingInfoButtonStyle: ButtonStyle {
-    @Environment(\.isFocused) private var isFocused
-    @Environment(\.isEnabled) private var isEnabled
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .font(.system(size: 18, weight: .bold, design: .rounded))
-            .padding(.horizontal, 18)
-            .frame(height: 48)
-            .foregroundStyle(isFocused ? Color.black : Color.white.opacity(0.86))
-            .background(
-                Capsule()
-                    .fill(isFocused ? Color.white : Color.white.opacity(0.10))
-            )
-            .overlay {
-                Capsule()
-                    .stroke(Color.white.opacity(isFocused ? 0.9 : 0.12), lineWidth: 1)
+                Capsule().stroke(Color.white.opacity(isFocused ? 0.92 : 0.10), lineWidth: 1)
             }
             .scaleEffect(isFocused && !reduceMotion ? 1.06 : (configuration.isPressed ? 0.97 : 1))
-            .opacity(isEnabled ? 1 : 0.3)
+            .shadow(color: .black.opacity(isFocused ? 0.32 : 0), radius: isFocused ? 16 : 0, y: 8)
             .animation(reduceMotion ? nil : .easeOut(duration: 0.14), value: isFocused)
-    }
-}
-
-private struct NowPlayingQueueCardStyle: ButtonStyle {
-    @Environment(\.isFocused) private var isFocused
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    let isCurrent: Bool
-
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .padding(14)
-            .foregroundStyle(isFocused ? Color.black : Color.white)
-            .background {
-                RoundedRectangle(cornerRadius: 28, style: .continuous)
-                    .fill(isFocused ? Color.white : Color.white.opacity(isCurrent ? 0.12 : 0.055))
-            }
-            .overlay {
-                RoundedRectangle(cornerRadius: 28, style: .continuous)
-                    .stroke(
-                        isFocused ? Color.white : (isCurrent ? TVTheme.accent.opacity(0.72) : Color.white.opacity(0.08)),
-                        lineWidth: isFocused || isCurrent ? 3 : 1
-                    )
-            }
-            .scaleEffect(isFocused && !reduceMotion ? 1.055 : (configuration.isPressed ? 0.98 : 1))
-            .shadow(color: .black.opacity(isFocused ? 0.46 : 0.12), radius: isFocused ? 28 : 10, y: isFocused ? 14 : 5)
-            .animation(reduceMotion ? nil : .easeOut(duration: 0.16), value: isFocused)
     }
 }

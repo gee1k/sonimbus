@@ -7,6 +7,11 @@ final class AccountStore {
     static let shared = AccountStore()
     private static let lastUserIDKey = "auth.lastUserID"
 
+    private var savedAccountArchive = SavedAccountStorage.read()
+    private(set) var isSwitchingAccount = false
+    private(set) var identityRevision = 0
+    var savedAccounts: [UserProfile] { savedAccountArchive.sessions.map(\.profile) }
+
     private(set) var profile: UserProfile?
     private(set) var membership: VIPMembership?
     private(set) var playlists: [PlaylistSummary] = []
@@ -47,6 +52,15 @@ final class AccountStore {
 
     @discardableResult
     func bootstrap() async -> Bool {
+#if DEBUG
+        if ProcessInfo.processInfo.environment["SONIMBUS_UI_PLAYER_ACTIONS"] == "1" {
+            // Local-only UI fixture: do not read credentials or contact the service.
+            profile = try? JSONDecoder().decode(UserProfile.self, from: Data(#"{"userId":70001,"nickname":"交互测试","vipType":0}"#.utf8))
+            playlists = (try? JSONDecoder().decode([PlaylistSummary].self, from: Data(#"[{"id":71001,"name":"我喜欢的音乐","specialType":5,"creator":{"userId":70001}},{"id":71002,"name":"测试歌单","creator":{"userId":70001}}]"#.utf8))) ?? []
+            hasBootstrapped = true
+            return true
+        }
+#endif
         guard !isBootstrapping else { return isLoggedIn }
         isBootstrapping = true
         defer {
@@ -77,6 +91,7 @@ final class AccountStore {
             }
             UserDefaults.standard.set(fetchedProfile.userId, forKey: Self.lastUserIDKey)
             profile = fetchedProfile
+            saveCurrentAccount()
             bootstrapError = nil
             let activeAccountGeneration = accountGeneration
             await refreshLibrary()
@@ -384,20 +399,118 @@ final class AccountStore {
         }
     }
 
-    func logout() async {
-        refreshCookieTask?.cancel()
-        refreshCookieTask = nil
-        await NeteaseAPI.logout()
-        NeteaseClient.shared.clearAuthentication()
-        clearAccountData()
-        bootstrapError = nil
+    /// Preserve a refreshed token before switching or suspending the app.
+    func saveCurrentAccount() {
+        guard let profile, hasAuthenticationCookie else { return }
+        do {
+            var archive = savedAccountArchive
+            archive.remember(profile: profile, cookies: NeteaseClient.shared.authenticationCookies())
+            try SavedAccountStorage.write(archive)
+            savedAccountArchive = archive
+        } catch {
+            ToastCenter.shared.show(error.localizedDescription)
+        }
     }
 
-    private func clearAccountData() {
+    func completeLogin(using client: NeteaseClient) async throws {
+        guard !isSwitchingAccount, !isBootstrapping else { throw AccountChangeError.busy }
+        isSwitchingAccount = true
+        defer { isSwitchingAccount = false }
+        guard let newProfile = try await NeteaseAPI.account(client: client), client.isLoggedIn else {
+            throw NeteaseAPIError.needLogin
+        }
+        try Task.checkCancellation()
+        var archive = savedAccountArchive
+        if let profile {
+            archive.remember(profile: profile, cookies: NeteaseClient.shared.authenticationCookies())
+        }
+        let cookies = client.authenticationCookies()
+        archive.remember(profile: newProfile, cookies: cookies)
+        try SavedAccountStorage.write(archive)
+        savedAccountArchive = archive
+        clearAccountData(resetViews: false)
+        NeteaseClient.shared.replaceAuthentication(with: cookies)
+        profile = newProfile
+        UserDefaults.standard.set(newProfile.userId, forKey: Self.lastUserIDKey)
+        bootstrapError = nil
+        hasBootstrapped = true
+        await refreshLibrary()
+        refreshCookieOncePerDay()
+        identityRevision &+= 1
+    }
+
+    func switchAccount(userID: Int) async {
+        guard !isSwitchingAccount, !isBootstrapping, profile?.userId != userID else { return }
+        isSwitchingAccount = true
+        defer { isSwitchingAccount = false }
+        do {
+            var archive = savedAccountArchive
+            if let profile {
+                archive.remember(profile: profile, cookies: NeteaseClient.shared.authenticationCookies())
+            }
+            guard let session = archive.session(userID: userID) else { return }
+            try SavedAccountStorage.write(archive)
+            savedAccountArchive = archive
+            clearAccountData()
+            NeteaseClient.shared.replaceAuthentication(with: session.cookies)
+            UserDefaults.standard.set(userID, forKey: Self.lastUserIDKey)
+            _ = await bootstrap()
+        } catch {
+            ToastCenter.shared.show(error.localizedDescription)
+        }
+    }
+
+    func removeSavedAccount(userID: Int) {
+        guard !isSwitchingAccount, !isBootstrapping else { return }
+        do {
+            var archive = savedAccountArchive
+            archive.remove(userID: userID)
+            try SavedAccountStorage.write(archive)
+            savedAccountArchive = archive
+            if (profile?.userId ?? (UserDefaults.standard.object(forKey: Self.lastUserIDKey) as? Int)) == userID {
+                NeteaseClient.shared.clearAuthentication()
+                clearAccountData()
+                bootstrapError = nil
+            }
+        } catch {
+            ToastCenter.shared.show(error.localizedDescription)
+        }
+    }
+
+    func logout() async {
+        guard !isSwitchingAccount, !isBootstrapping else { return }
+        isSwitchingAccount = true
+        defer { isSwitchingAccount = false }
+        do {
+            var archive = savedAccountArchive
+            if let userID = profile?.userId ?? (UserDefaults.standard.object(forKey: Self.lastUserIDKey) as? Int) {
+                archive.remove(userID: userID)
+            }
+            try SavedAccountStorage.write(archive)
+            savedAccountArchive = archive
+            refreshCookieTask?.cancel()
+            refreshCookieTask = nil
+            await NeteaseAPI.logout()
+            NeteaseClient.shared.clearAuthentication()
+            clearAccountData()
+            bootstrapError = nil
+        } catch {
+            ToastCenter.shared.show(error.localizedDescription)
+        }
+    }
+
+    private enum AccountChangeError: LocalizedError {
+        case busy
+        var errorDescription: String? { "账号正在同步，请稍后重试" }
+    }
+
+    private func clearAccountData(resetViews: Bool = true) {
+        TopShelfPublisher.clear()
         refreshCookieTask?.cancel()
         refreshCookieTask = nil
         accountGeneration &+= 1
         libraryRefreshGeneration &+= 1
+        if resetViews { identityRevision &+= 1 }
         PlayerService.shared.clearForAccountChange()
         profile = nil
         membership = nil
@@ -432,16 +545,20 @@ final class AccountStore {
     }
 
     private func refreshCookieOncePerDay() {
-        let key = "auth.lastRefresh"
+        let key = "auth.lastRefresh.\(profile?.userId ?? 0)"
         let today = Calendar.current.startOfDay(for: .now).timeIntervalSince1970
         guard UserDefaults.standard.double(forKey: key) < today,
               refreshCookieTask == nil else { return }
+        let generation = accountGeneration
         refreshCookieTask = Task { [weak self] in
-            defer { self?.refreshCookieTask = nil }
+            defer {
+                if self?.accountGeneration == generation { self?.refreshCookieTask = nil }
+            }
             do {
                 try await NeteaseAPI.refreshLogin()
-                guard !Task.isCancelled else { return }
+                guard !Task.isCancelled, self?.accountGeneration == generation else { return }
                 UserDefaults.standard.set(today, forKey: key)
+                self?.saveCurrentAccount()
             } catch {
                 // Keep the old timestamp so the next launch can retry.
             }

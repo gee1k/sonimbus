@@ -66,19 +66,28 @@ enum RootContentAnchor: Hashable {
     case top
 }
 
-private typealias NavigationReturnFocus = NavigationReturnContext<
+private struct NowPlayingReturnTarget: Hashable {
+    let source: NowPlayingPresentationSource
+    let origin: PlaybackOriginFocus?
+}
+
+/// A detail opened from Now Playing unwinds back to Now Playing, like Apple Music.
+private typealias NowPlayingReturn = NavigationReturnContext<
     RootTab,
     AppRoute,
-    PlaybackOriginFocus
+    NowPlayingReturnTarget
 >
 
 struct AppShellView: View {
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(AccountStore.self) private var account
+    @Environment(ContentStore.self) private var content
     @Environment(PlayerService.self) private var player
     @Environment(ToastCenter.self) private var toast
 
+    @State private var pendingTopShelfLink: TopShelfLink?
+    @State private var topShelfTask: Task<Void, Never>?
     @State private var selectedTab = RootTab.listenNow
     @State private var tabPresentations: [RootTab: RootTabPresentationState<AppRoute>] = [:]
     @State private var browseSession = BrowseSession()
@@ -87,7 +96,7 @@ struct AppShellView: View {
     @State private var nowPlayingPresentation = NowPlayingPresentationState()
     @State private var nowPlayingActivationGeneration = 0
     @State private var nowPlayingOriginFocus: PlaybackOriginFocus?
-    @State private var navigationReturnFocusStack: [NavigationReturnFocus] = []
+    @State private var nowPlayingReturnStack: [NowPlayingReturn] = []
     @State private var focusRestorationGeneration = 0
     @State private var focusRestorationTab: RootTab?
     @State private var focusRestorationRequest: PlaybackFocusRestorationRequest?
@@ -99,7 +108,7 @@ struct AppShellView: View {
             NavigationStack(path: pathBinding(for: navigationTab)) {
                 ZStack {
                     TVBackground()
-                    rootTabs
+                    rootTabs.id(account.identityRevision)
                 }
                 .navigationDestination(for: AppRoute.self, destination: routeDestination)
             }
@@ -109,6 +118,7 @@ struct AppShellView: View {
             )
             .environment(\.completePlaybackFocusRestoration, completeFocusRestoration)
             .disabled(nowPlayingPresentation.isPresented)
+            .accessibilityHidden(nowPlayingPresentation.isPresented)
 
             toastOverlay
 
@@ -120,20 +130,118 @@ struct AppShellView: View {
                 )
                 .environment(\.openRouteFromNowPlaying, openRouteFromNowPlaying)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .transition(nowPlayingTransition)
                 .zIndex(10)
             }
         }
+        .animation(
+            reduceMotion ? nil : .smooth(duration: 0.42),
+            value: nowPlayingPresentation.isPresented
+        )
         .environment(\.openNowPlaying, presentContextualNowPlaying)
         .animation(reduceMotion ? nil : .easeOut(duration: 0.2), value: toast.current)
         .onPlayPauseCommand {
             player.togglePlayPause()
         }
         .task {
+#if DEBUG
+            if ProcessInfo.processInfo.environment["SONIMBUS_UI_LARGE_PLAYLIST"] == "1" {
+                appendRouteIfNeeded(.playlist(9_000_000), in: .listenNow)
+                return
+            }
+#endif
             await account.bootstrap()
+            TopShelfPublisher.update(account: account, player: player)
+            openPendingTopShelfLink()
+        }
+        .onOpenURL { url in
+            guard let link = TopShelfLink(url: url) else { return }
+            pendingTopShelfLink = link
+            openPendingTopShelfLink()
+        }
+        .onChange(of: account.isBootstrapping) { _, busy in
+            if !busy { openPendingTopShelfLink() }
+        }
+        .onChange(of: account.isSwitchingAccount) { _, busy in
+            if !busy { openPendingTopShelfLink() }
+        }
+        .onChange(of: account.playlists) { _, _ in
+            TopShelfPublisher.update(account: account, player: player)
+        }
+        .onChange(of: player.recentTracks) { _, _ in
+            TopShelfPublisher.update(account: account, player: player)
+        }
+        .onChange(of: account.identityRevision) { _, _ in
+            topShelfTask?.cancel()
+            content.removeAll()
+            MVPlaybackController.shared.stop()
+            tabPresentations = [:]
+            browseSession = BrowseSession()
+            searchSession = SearchSession()
+            nowPlayingReturnStack = []
+            focusRestorationRequest = nil
+            focusRestorationTab = nil
+            nowPlayingOriginFocus = nil
+            _ = nowPlayingPresentation.dismiss()
+            selectedTab = .library
+            lastContentTab = .library
         }
         .onChange(of: scenePhase) { _, phase in
             if phase != .active {
                 player.saveState()
+                account.saveCurrentAccount()
+                TopShelfPublisher.update(account: account, player: player)
+            }
+        }
+    }
+
+    private func openPendingTopShelfLink() {
+        guard account.hasBootstrapped, !account.isBootstrapping,
+              !account.isSwitchingAccount, let link = pendingTopShelfLink else { return }
+        pendingTopShelfLink = nil
+        topShelfTask?.cancel()
+        guard account.isLoggedIn, account.profile?.userId == link.accountID else {
+            selectedTab = .library
+            lastContentTab = .library
+            toast.show("请先切换到此内容所属的账号")
+            return
+        }
+        let revision = account.identityRevision
+        _ = nowPlayingPresentation.dismiss()
+        MVPlaybackController.shared.stop()
+        selectedTab = .library
+        lastContentTab = .library
+        resetRootPresentation(for: .library)
+        if link.kind == .playlist && link.action == .display {
+            appendRouteIfNeeded(.playlist(link.id), in: .library)
+            return
+        }
+        toast.show("正在载入播放内容…")
+        topShelfTask = Task { @MainActor in
+            do {
+                let tracks: [Track]
+                let source: PlaySource
+                switch link.kind {
+                case .playlist:
+                    tracks = try await NeteaseAPI.playlist(id: link.id).playlist.tracks
+                    source = .playlist(link.id)
+                case .track:
+                    tracks = try await NeteaseAPI.songDetails(ids: [link.id]).songs
+                    source = .recent
+                }
+                guard !Task.isCancelled, account.identityRevision == revision,
+                      account.profile?.userId == link.accountID else { return }
+                guard !player.visibleTracks(tracks).isEmpty else {
+                    toast.show("此内容暂时无法播放")
+                    return
+                }
+                player.play(tracks, source: source)
+                _ = presentNowPlaying(from: .tabBar)
+            } catch is CancellationError {
+                return
+            } catch {
+                guard account.identityRevision == revision else { return }
+                toast.show(error.localizedDescription)
             }
         }
     }
@@ -224,6 +332,13 @@ struct AppShellView: View {
         }
     }
 
+    private var nowPlayingTransition: AnyTransition {
+        .asymmetric(
+            insertion: .opacity.combined(with: .scale(scale: 1.04)),
+            removal: .opacity.combined(with: .scale(scale: 1.02))
+        )
+    }
+
     private func presentContextualNowPlaying(from origin: PlaybackOriginFocus) {
         guard selectedTab.isContentTab else { return }
         if nowPlayingPresentation.isPresented {
@@ -274,7 +389,10 @@ struct AppShellView: View {
 
         let destinationTab = source == .tabBar ? lastContentTab : selectedTab
         guard destinationTab.isContentTab else { return }
-        let parentPath = presentationState(for: destinationTab).path
+        var parentPath = presentationState(for: destinationTab).path
+        if parentPath.last == route {
+            parentPath.removeLast()
+        }
         let origin = source == .contextual ? nowPlayingOriginFocus : nil
 
         if source == .tabBar {
@@ -284,17 +402,28 @@ struct AppShellView: View {
         nowPlayingOriginFocus = nil
         _ = nowPlayingPresentation.dismiss()
 
-        if let origin {
-            let restoration = NavigationReturnFocus(
+        // The playback origin is restored when Now Playing itself is dismissed later.
+        nowPlayingReturnStack.append(
+            NowPlayingReturn(
                 tab: destinationTab,
                 parentPath: parentPath,
-                focus: origin
+                focus: NowPlayingReturnTarget(source: source, origin: origin)
             )
-            navigationReturnFocusStack.append(restoration)
-            appendRouteIfNeeded(route, in: destinationTab)
-            armFocusRestoration(for: restoration)
-        } else {
-            appendRouteIfNeeded(route, in: destinationTab)
+        )
+        appendRouteIfNeeded(route, in: destinationTab)
+    }
+
+    private func returnToNowPlaying(_ target: NowPlayingReturnTarget, in tab: RootTab) {
+        Task { @MainActor in
+            await Task.yield()
+            guard !nowPlayingPresentation.isPresented,
+                  activeNavigationTab == tab else { return }
+            nowPlayingOriginFocus = target.origin
+            if target.source == .tabBar {
+                lastContentTab = tab
+                selectedTab = .nowPlaying
+            }
+            presentNowPlaying(from: target.source)
         }
     }
 
@@ -323,25 +452,14 @@ struct AppShellView: View {
             MVPlaybackController.shared.stop()
         }
 
-        let restoration = navigationReturnFocusStack.last {
+        let nowPlayingReturn = nowPlayingReturnStack.last {
             $0.matches(tab: tab, parentPath: newPath)
         }
-        navigationReturnFocusStack.removeAll {
+        nowPlayingReturnStack.removeAll {
             $0.shouldDiscard(when: tab, popsToDepth: newPath.count)
         }
-        if let restoration {
-            requestFocusRestoration(restoration.focus, in: tab)
-        }
-    }
-
-    private func armFocusRestoration(for restoration: NavigationReturnFocus) {
-        Task { @MainActor in
-            await Task.yield()
-            guard navigationReturnFocusStack.contains(restoration),
-                  presentationState(for: restoration.tab).path.count > restoration.parentPath.count else {
-                return
-            }
-            requestFocusRestoration(restoration.focus, in: restoration.tab)
+        if let nowPlayingReturn {
+            returnToNowPlaying(nowPlayingReturn.focus, in: tab)
         }
     }
 
@@ -367,7 +485,7 @@ struct AppShellView: View {
         var presentation = presentationState(for: tab)
         presentation.resetToRoot()
         tabPresentations[tab] = presentation
-        navigationReturnFocusStack.removeAll { $0.tab == tab }
+        nowPlayingReturnStack.removeAll { $0.tab == tab }
         if focusRestorationTab == tab {
             focusRestorationRequest = nil
             focusRestorationTab = nil
@@ -384,7 +502,16 @@ struct AppShellView: View {
     @ViewBuilder
     private func routeDestination(_ route: AppRoute) -> some View {
         switch route {
-        case .playlist(let id): PlaylistDetailView(playlistID: id)
+        case .playlist(let id):
+#if DEBUG
+            if id == 9_000_000 && ProcessInfo.processInfo.environment["SONIMBUS_UI_LARGE_PLAYLIST"] == "1" {
+                LargePlaylistRegressionFixture()
+            } else {
+                PlaylistDetailView(playlistID: id)
+            }
+#else
+            PlaylistDetailView(playlistID: id)
+#endif
         case .album(let id): AlbumDetailView(albumID: id)
         case .artist(let id): ArtistDetailView(artistID: id)
         case .mv(let id): MVDetailView(mvID: id)
