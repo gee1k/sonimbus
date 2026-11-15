@@ -587,6 +587,12 @@ struct PlayRecordItem: Decodable, Hashable {
     let score: Int
     let song: Track
 
+    init(song: Track) {
+        self.song = song
+        playCount = 0
+        score = 0
+    }
+
     private enum CodingKeys: String, CodingKey {
         case playCount, score, song
     }

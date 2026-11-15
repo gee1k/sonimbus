@@ -307,6 +307,191 @@ final class NavigationRegressionUITests: XCTestCase {
         XCTAssertEqual(focusedButton(in: app).label, browse.label)
     }
 
+    func testLivePlaybackAdvancesPausesAndReturnsToHome() throws {
+        guard ProcessInfo.processInfo.environment["SONIMBUS_LIVE_UI"] == "1" else {
+            throw XCTSkip("Enable SONIMBUS_LIVE_UI for network playback acceptance")
+        }
+        let app = XCUIApplication()
+        app.launch()
+        let card = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'track-card-home-new-songs-'")).firstMatch
+        XCTAssertTrue(app.buttons["现在就听"].firstMatch.waitForExistence(timeout: 10))
+        XCTAssertTrue(focusFirstButton(withPrefix: "track-card-home-new-songs-", in: app, timeout: 35))
+        XCTAssertTrue(card.exists)
+        XCTAssertTrue(focus(card, in: app, timeout: 15))
+        XCUIRemote.shared.press(.select)
+        XCTAssertTrue(nowPlayingPage(in: app).waitForExistence(timeout: 10))
+        let progress = app.descendants(matching: .any).matching(NSPredicate(format: "label == '播放进度' AND value CONTAINS '/' ")).firstMatch
+        XCTAssertTrue(progress.waitForExistence(timeout: 30))
+        let advances = NSPredicate { _, _ in
+            guard let value = progress.value as? String,
+                  let elapsed = value.components(separatedBy: " / ").first else { return false }
+            return elapsed != "0:00" && elapsed != "00:00"
+        }
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: advances, object: nil)], timeout: 40), .completed)
+        XCUIRemote.shared.press(.playPause)
+        XCTAssertTrue(app.buttons["播放"].firstMatch.waitForExistence(timeout: 5))
+        let paused = progress.value as? String
+        let changesWhilePaused = XCTNSPredicateExpectation(
+            predicate: NSPredicate { _, _ in (progress.value as? String) != paused }, object: nil
+        )
+        changesWhilePaused.isInverted = true
+        XCTAssertEqual(XCTWaiter.wait(for: [changesWhilePaused], timeout: 3), .completed)
+        XCUIRemote.shared.press(.playPause)
+        XCTAssertTrue(app.buttons["暂停"].firstMatch.waitForExistence(timeout: 5))
+        let resumed = NSPredicate { _, _ in (progress.value as? String) != paused }
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: resumed, object: nil)], timeout: 10), .completed)
+        let screenshot = XCTAttachment(screenshot: app.screenshot())
+        screenshot.name = "live-playback"
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
+        dismissNowPlaying(in: app)
+        XCTAssertTrue(card.waitForExistence(timeout: 5))
+        XCTAssertTrue(waitForFocus(card, timeout: 5))
+    }
+
+    func testAuthenticatedRecentPlaysLikesAndPersonalFM() throws {
+        guard ProcessInfo.processInfo.environment["SONIMBUS_AUTH_UI"] == "1" else {
+            throw XCTSkip("Requires an explicitly signed-in simulator account")
+        }
+        let app = XCUIApplication()
+        app.launch()
+        let library = app.buttons["资料库"].firstMatch
+        XCTAssertTrue(library.waitForExistence(timeout: 15))
+        XCTAssertTrue(focus(library, in: app, timeout: 10))
+        let likedLibrary = app.buttons.matching(NSPredicate(format: "label CONTAINS '我喜欢的音乐'")).firstMatch
+        XCTAssertTrue(likedLibrary.waitForExistence(timeout: 30), "Signed-in library must finish loading")
+        let recent = app.buttons.matching(NSPredicate(format: "label CONTAINS '最近播放'")).firstMatch
+        XCTAssertTrue(recent.waitForExistence(timeout: 10))
+        XCTAssertTrue(focus(recent, in: app, timeout: 12))
+        XCUIRemote.shared.press(.select)
+        let firstRow = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'track-row-recent-history-'")).firstMatch
+        XCTAssertTrue(firstRow.waitForExistence(timeout: 25), "Account recent-song endpoint must return tracks")
+        let rowID = firstRow.identifier
+        let recentShot = XCTAttachment(screenshot: app.screenshot())
+        recentShot.name = "authenticated-recent-plays"
+        recentShot.lifetime = .keepAlways
+        add(recentShot)
+        XCTAssertTrue(focus(firstRow, in: app, timeout: 12))
+        XCUIRemote.shared.press(.select)
+        XCTAssertTrue(nowPlayingPage(in: app).waitForExistence(timeout: 10))
+        let originalLiked = app.buttons["取消喜欢"].firstMatch.exists
+        let initialLabel = originalLiked ? "取消喜欢" : "喜欢"
+        let oppositeLabel = originalLiked ? "喜欢" : "取消喜欢"
+        var needsRestore = false
+        addTeardownBlock {
+            guard needsRestore, app.state == .runningForeground else { return }
+            let restore = app.buttons[oppositeLabel].firstMatch
+            if restore.exists, self.focus(restore, in: app, timeout: 8) {
+                XCUIRemote.shared.press(.select)
+                XCTAssertTrue(app.buttons[initialLabel].firstMatch.waitForExistence(timeout: 10), "Restore original like state")
+            }
+        }
+        let favorite = app.buttons[initialLabel].firstMatch
+        XCTAssertTrue(favorite.waitForExistence(timeout: 10))
+        XCTAssertTrue(focus(favorite, in: app, timeout: 10))
+        needsRestore = true
+        XCUIRemote.shared.press(.select)
+        let changedMessage = originalLiked ? "已取消喜欢" : "已添加到喜欢的音乐"
+        XCTAssertTrue(app.staticTexts[changedMessage].firstMatch.waitForExistence(timeout: 15), "Like write must be acknowledged by server")
+        func reloadAccountAndOpenCurrentTrack() {
+            app.terminate()
+            app.launch()
+            XCTAssertTrue(library.waitForExistence(timeout: 15))
+            XCTAssertTrue(focus(library, in: app, timeout: 10))
+            XCTAssertTrue(likedLibrary.waitForExistence(timeout: 30))
+            XCUIRemote.shared.press(.right)
+            XCTAssertTrue(nowPlayingPage(in: app).waitForExistence(timeout: 10))
+        }
+        reloadAccountAndOpenCurrentTrack()
+        let restore = app.buttons[oppositeLabel].firstMatch
+        XCTAssertTrue(restore.waitForExistence(timeout: 10), "Server like state must survive account reload")
+        XCTAssertTrue(focus(restore, in: app, timeout: 10))
+        XCUIRemote.shared.press(.select)
+        let restoredMessage = originalLiked ? "已添加到喜欢的音乐" : "已取消喜欢"
+        XCTAssertTrue(app.staticTexts[restoredMessage].firstMatch.waitForExistence(timeout: 15))
+        XCTAssertTrue(app.buttons[initialLabel].firstMatch.exists)
+        needsRestore = false
+        reloadAccountAndOpenCurrentTrack()
+        XCTAssertTrue(app.buttons[initialLabel].firstMatch.waitForExistence(timeout: 10), "Restored server state must survive account reload")
+        dismissNowPlaying(in: app)
+        XCTAssertTrue(recent.waitForExistence(timeout: 10))
+        XCTAssertTrue(focus(recent, in: app, timeout: 12))
+        XCUIRemote.shared.press(.select)
+        XCTAssertTrue(app.buttons[rowID].firstMatch.waitForExistence(timeout: 15))
+        XCUIRemote.shared.press(.menu)
+        XCUIRemote.shared.press(.menu)
+        let home = app.buttons["现在就听"].firstMatch
+        XCTAssertTrue(focus(home, in: app, timeout: 12))
+        let fm = app.buttons["home-personal-fm"].firstMatch
+        XCTAssertTrue(fm.waitForExistence(timeout: 10))
+        XCTAssertTrue(focus(fm, in: app, timeout: 10))
+        XCUIRemote.shared.press(.select)
+        XCTAssertTrue(nowPlayingPage(in: app).waitForExistence(timeout: 10))
+        let fmDislike = app.buttons["减少类似推荐并播放下一首"].firstMatch
+        XCTAssertTrue(fmDislike.waitForExistence(timeout: 30), "Personal FM must return a playable track")
+        let progress = app.descendants(matching: .any).matching(NSPredicate(format: "label == '播放进度' AND value CONTAINS '/' ")).firstMatch
+        XCTAssertTrue(progress.waitForExistence(timeout: 15))
+        let advances = NSPredicate { _, _ in
+            guard let value = progress.value as? String,
+                  let elapsed = value.components(separatedBy: " / ").first else { return false }
+            return elapsed != "0:00" && elapsed != "00:00"
+        }
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: advances, object: nil)], timeout: 30), .completed)
+        let fmShot = XCTAttachment(screenshot: app.screenshot())
+        fmShot.name = "authenticated-personal-fm"
+        fmShot.lifetime = .keepAlways
+        add(fmShot)
+        let next = app.buttons["下一首"].firstMatch
+        XCTAssertTrue(focus(next, in: app, timeout: 10))
+        XCUIRemote.shared.press(.select)
+        XCTAssertTrue(fmDislike.waitForExistence(timeout: 20))
+        XCUIRemote.shared.press(.playPause)
+    }
+
+    func testAuthenticatedRecentPlayReportingSurvivesRelaunch() throws {
+        guard ProcessInfo.processInfo.environment["SONIMBUS_AUTH_UI"] == "1" else {
+            throw XCTSkip("Requires an explicitly signed-in simulator account")
+        }
+        let app = XCUIApplication()
+        func openAccountRecents() {
+            app.launch()
+            let library = app.buttons["资料库"].firstMatch
+            XCTAssertTrue(library.waitForExistence(timeout: 15))
+            XCTAssertTrue(focus(library, in: app, timeout: 10))
+            let recent = app.buttons.matching(NSPredicate(format: "label CONTAINS '最近播放'")).firstMatch
+            XCTAssertTrue(recent.waitForExistence(timeout: 30))
+            XCTAssertTrue(focus(recent, in: app, timeout: 12))
+            XCUIRemote.shared.press(.select)
+        }
+        openAccountRecents()
+        XCTAssertTrue(waitUntil(timeout: 20) {
+            app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'track-row-recent-history-'")).count >= 2
+        })
+        let row = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'track-row-recent-history-'")).element(boundBy: 1)
+        let selectedID = row.identifier
+        XCTAssertTrue(focus(row, in: app, timeout: 12))
+        XCUIRemote.shared.press(.select)
+        XCTAssertTrue(nowPlayingPage(in: app).waitForExistence(timeout: 10))
+        let progress = app.descendants(matching: .any).matching(NSPredicate(format: "label == '播放进度' AND value CONTAINS '/' ")).firstMatch
+        let played = NSPredicate { _, _ in
+            guard let value = progress.value as? String,
+                  let elapsed = value.components(separatedBy: " / ").first else { return false }
+            let parts = elapsed.split(separator: ":").compactMap { Int($0) }
+            return parts.count == 2 && parts[0] * 60 + parts[1] >= 6
+        }
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: played, object: nil)], timeout: 45), .completed)
+        XCUIRemote.shared.press(.playPause)
+        app.terminate()
+        openAccountRecents()
+        let newest = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'track-row-recent-history-'")).firstMatch
+        XCTAssertTrue(newest.waitForExistence(timeout: 25))
+        XCTAssertEqual(newest.identifier, selectedID, "Recently played song must move to the top after a fresh server read")
+        let screenshot = XCTAttachment(screenshot: app.screenshot())
+        screenshot.name = "server-recent-order-after-relaunch"
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
+    }
+
     private func launchFixture(
         duplicatesAcrossShelves: Bool = false,
         searchFixture: Bool = false
@@ -393,8 +578,8 @@ final class NavigationRegressionUITests: XCTestCase {
         while Date() < deadline {
             if element.exists && element.hasFocus { return true }
 
-            let current = app.buttons.matching(NSPredicate(format: "hasFocus == true"))
-                .firstMatch
+            let current = app.descendants(matching: .any)
+                .matching(NSPredicate(format: "hasFocus == true")).firstMatch
             guard element.exists else {
                 usleep(100_000)
                 continue

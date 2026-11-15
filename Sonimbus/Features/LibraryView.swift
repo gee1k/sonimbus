@@ -417,7 +417,7 @@ struct RecentPlaysView: View {
     @Environment(ContentStore.self) private var contentStore
     @Namespace private var focusScope
 
-    @State private var weekOnly = true
+    @State private var weekOnly: Bool? = nil
     @State private var isLoading = true
     @State private var errorMessage: String?
     @State private var loadGeneration = 0
@@ -444,7 +444,7 @@ struct RecentPlaysView: View {
         VStack(spacing: 26) {
             HStack(spacing: 24) {
                 VStack(alignment: .leading, spacing: 6) {
-                    Text("最近播放")
+                    Text(weekOnly == nil ? "最近播放" : "听歌排行")
                         .font(.system(size: 48, weight: .bold, design: .rounded))
                     Text("与网易云音乐账号同步的听歌记录")
                         .font(.headline)
@@ -452,11 +452,12 @@ struct RecentPlaysView: View {
                 }
                 Spacer()
                 Picker("时间范围", selection: $weekOnly) {
-                    Text("最近一周").tag(true)
-                    Text("所有时间").tag(false)
+                    Text("最近播放").tag(Optional<Bool>.none)
+                    Text("本周排行").tag(Optional(true))
+                    Text("总排行").tag(Optional(false))
                 }
                 .pickerStyle(.segmented)
-                .frame(width: 420)
+                .frame(width: 600)
                 .focused($focusedHeaderAction, equals: .range)
                 .prefersDefaultFocus(
                     !isLoading && visibleRecords.isEmpty,
@@ -485,7 +486,7 @@ struct RecentPlaysView: View {
             target: !isLoading && visibleRecords.isEmpty ? .range : nil,
             in: focusScope
         )
-        .task(id: weekOnly) { await load() }
+        .task(id: contentKey) { await load() }
         .playbackOriginFocusScope(
             surfaces: [.recentHistory],
             defaultFocus: visibleRecords.isEmpty
@@ -506,7 +507,7 @@ struct RecentPlaysView: View {
             EmptyStateView(
                 title: records.isEmpty ? "还没有播放记录" : "没有可显示的歌曲",
                 message: records.isEmpty
-                    ? "完整播放一段音乐后会出现在这里。"
+                    ? "播放记录将在账号同步后显示。"
                     : "歌曲解锁已关闭，暂不可用歌曲已隐藏。",
                 symbol: "clock"
             )
@@ -548,7 +549,10 @@ struct RecentPlaysView: View {
         errorMessage = nil
         do {
             _ = try await contentStore.playRecords.load(for: key) { key in
-                try await NeteaseAPI.playRecords(userID: key.userID, week: key.weekOnly)
+                if let week = key.weekOnly {
+                    return try await NeteaseAPI.playRecords(userID: key.userID, week: week)
+                }
+                return try await NeteaseAPI.recentSongs()
             }
             guard generation == loadGeneration,
                   !Task.isCancelled,

@@ -97,7 +97,7 @@ final class ContentStore {
 
     struct PlayRecordsKey: Hashable {
         let userID: Int
-        let weekOnly: Bool
+        let weekOnly: Bool?
     }
 
     struct ArtistDetailContent {

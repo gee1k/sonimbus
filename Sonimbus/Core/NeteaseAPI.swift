@@ -15,9 +15,10 @@ enum NeteaseAPI {
     private static func eapi<T: Decodable>(
         _ type: T.Type,
         _ path: String,
-        _ payload: [String: Any] = [:]
+        _ payload: [String: Any] = [:],
+        desktopIdentity: Bool = false
     ) async throws -> T {
-        let data = try await client.eapi(path, payload)
+        let data = try await client.eapi(path, payload, desktopIdentity: desktopIdentity)
         return try client.decoded(type, from: data)
     }
 
@@ -320,7 +321,7 @@ enum NeteaseAPI {
         var privileges: [TrackPrivilege] = []
         for chunk in ids.chunked(size: 500) {
             let objects = "[" + chunk.map { "{\"id\":\($0)}" }.joined(separator: ",") + "]"
-            let response = try await weapi(SongDetailResponse.self, "/v3/song/detail", ["c": objects])
+            let response = try await eapi(SongDetailResponse.self, "/v3/song/detail", ["c": objects], desktopIdentity: true)
             songs.append(contentsOf: response.songs)
             privileges.append(contentsOf: response.privileges ?? [])
         }
@@ -426,8 +427,39 @@ enum NeteaseAPI {
         ).data
     }
 
+    static func songURLsRetrying(ids: [Int], level: String) async throws -> [SongURLData] {
+        try await PlaybackRequestRetry.run { try await songURLs(ids: ids, level: level) }
+    }
+
+    struct RecentSongsResponse: Decodable {
+        struct Body: Decodable {
+            let list: [Entry]
+        }
+        struct Entry: Decodable {
+            let song: Track?
+            private enum CodingKeys: String, CodingKey { case data }
+            init(from decoder: Decoder) throws {
+                let container = try? decoder.container(keyedBy: CodingKeys.self)
+                song = try? container?.decode(Track.self, forKey: .data)
+            }
+        }
+        let data: Body?
+
+        var records: [PlayRecordItem] {
+            var seen = Set<Int>()
+            return (data?.list ?? []).compactMap { entry in
+                guard let song = entry.song, song.id > 0, seen.insert(song.id).inserted else { return nil }
+                return PlayRecordItem(song: song)
+            }
+        }
+    }
+
+    static func recentSongs() async throws -> [PlayRecordItem] {
+        try await eapi(RecentSongsResponse.self, "/play-record/song/list", ["limit": 300], desktopIdentity: true).records
+    }
+
     static func lyrics(id: Int) async throws -> LyricResponse {
-        if let response = try? await weapi(
+        if let response = try? await eapi(
             LyricResponse.self,
             "/song/lyric/v1",
             ["id": id, "cp": false, "lv": 0, "kv": 0, "tv": 0, "rv": 0,
@@ -435,7 +467,8 @@ enum NeteaseAPI {
         ), LyricsParser.hasUsableLyrics(response) {
             return response
         }
-        return try await weapi(
+        try Task.checkCancellation()
+        return try await eapi(
             LyricResponse.self,
             "/song/lyric",
             ["id": id, "lv": -1, "kv": -1, "tv": -1, "rv": -1]
@@ -564,10 +597,11 @@ enum NeteaseAPI {
     }
 
     static func likeSong(id: Int, like: Bool) async throws {
-        _ = try await weapi(
+        _ = try await eapi(
             CodeOnly.self,
-            "/radio/like?alg=itembased&trackId=\(id)&time=3",
-            ["trackId": id, "like": like]
+            "/radio/like",
+            ["alg": "itembased", "trackId": String(id), "like": like ? "true" : "false", "time": "3"],
+            desktopIdentity: true
         )
     }
 
@@ -796,10 +830,11 @@ enum NeteaseAPI {
     }
 
     static func fmTrash(id: Int) async throws {
-        _ = try await weapi(
+        _ = try await eapi(
             CodeOnly.self,
-            "/radio/trash/add?alg=RT&songId=\(id)&time=25",
-            ["songId": id]
+            "/radio/trash/add",
+            ["alg": "RT", "songId": String(id), "time": "25"],
+            desktopIdentity: true
         )
     }
 

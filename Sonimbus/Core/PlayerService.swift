@@ -130,6 +130,9 @@ final class PlayerService {
     }
     private var didReachEnd = false
     private var attemptedAlternativeSources = Set<String>()
+    private var attemptedOfficialRecovery = false
+    private var cdnPolicy = PlaybackCDNPolicy()
+    private var pendingPlaybackSeek: TimeInterval?
 
     private var activeQueue: [Track] { shuffleEnabled ? shuffledQueue : queue }
 
@@ -165,7 +168,9 @@ final class PlayerService {
         ) { [weak self] time in
             Task { @MainActor in
                 guard let self, !self.isScrubbing, time.seconds.isFinite else { return }
+                guard self.engine.currentItem?.status == .readyToPlay, self.pendingPlaybackSeek == nil else { return }
                 self.progress = max(0, time.seconds)
+                if self.engine.timeControlStatus == .playing { self.consecutiveFailures = 0 }
                 if self.engine.timeControlStatus == .playing,
                    !self.startScrobbled, let track = self.currentTrack {
                     self.startScrobbled = true
@@ -349,6 +354,8 @@ final class PlayerService {
         alternativeSource = nil
         isTrial = false
         attemptedAlternativeSources.removeAll()
+        attemptedOfficialRecovery = false
+        pendingPlaybackSeek = nil
         isResolvingURL = false
         didReachEnd = false
         scrobbled = false
@@ -388,6 +395,8 @@ final class PlayerService {
         alternativeSource = nil
         isTrial = false
         attemptedAlternativeSources.removeAll()
+        attemptedOfficialRecovery = false
+        pendingPlaybackSeek = nil
         isPlaying = false
         isResolvingURL = false
         isBuffering = true
@@ -652,6 +661,8 @@ final class PlayerService {
         alternativeSource = nil
         isTrial = false
         attemptedAlternativeSources.removeAll()
+        attemptedOfficialRecovery = false
+        pendingPlaybackSeek = nil
         didReachEnd = false
         scrobbled = false
         startScrobbled = false
@@ -687,8 +698,9 @@ final class PlayerService {
         var receivedResponse = false
         var requestError: Error?
         for quality in preferredQuality.fallbackLevels {
+            guard generation == resolveGeneration else { return }
             do {
-                let candidate = try await NeteaseAPI.songURLs(ids: [track.id], level: quality.rawValue).first
+                let candidate = try await NeteaseAPI.songURLsRetrying(ids: [track.id], level: quality.rawValue).first
                 receivedResponse = true
                 result = candidate
                 if candidate?.url != nil { break }
@@ -730,7 +742,6 @@ final class PlayerService {
             return
         }
 
-        consecutiveFailures = 0
         recordRecent(track)
         persistState()
         alternativeSource = resolvedAlternative?.source
@@ -758,7 +769,9 @@ final class PlayerService {
     ) async {
         guard generation == resolveGeneration,
               currentTrack?.id == track.id else { return }
-        let item = AVPlayerItem(url: url)
+        let playbackURL = alternativeSource == nil ? cdnPolicy.preferred(url) : url
+        let item = AVPlayerItem(url: playbackURL)
+        pendingPlaybackSeek = position > 0 ? position : nil
         if let endObserver { NotificationCenter.default.removeObserver(endObserver) }
         endObserver = NotificationCenter.default.addObserver(
             forName: AVPlayerItem.didPlayToEndTimeNotification,
@@ -768,27 +781,37 @@ final class PlayerService {
             Task { @MainActor in self?.handleEnded() }
         }
         engine.replaceCurrentItem(with: item)
-        itemStatusObservation = item.observe(\.status, options: [.new]) { [weak self] item, _ in
-            guard item.status == .failed else { return }
-            Task { @MainActor in
-                self?.handleFailedItem(item, track: track, generation: generation)
-            }
-        }
-        if position > 0 {
-            await engine.seek(
-                to: CMTime(seconds: min(position, duration), preferredTimescale: 600),
-                toleranceBefore: .zero,
-                toleranceAfter: .zero
-            )
-        }
-        engine.play()
         isPlaying = true
         isResolvingURL = false
-        isBuffering = engine.timeControlStatus == .waitingToPlayAtSpecifiedRate
+        isBuffering = true
+        itemStatusObservation = item.observe(\.status, options: [.initial, .new]) { [weak self] item, _ in
+            Task { @MainActor in
+                guard let self, generation == self.resolveGeneration,
+                      self.engine.currentItem === item else { return }
+                if item.status == .failed {
+                    self.handleFailedItem(item, url: playbackURL, track: track, generation: generation)
+                } else if item.status == .readyToPlay {
+                    self.cdnPolicy.markReachable(playbackURL)
+                    if position > 0 {
+                        await self.engine.seek(
+                            to: CMTime(seconds: min(position, self.duration), preferredTimescale: 600),
+                            toleranceBefore: .zero, toleranceAfter: .zero
+                        )
+                    }
+                    guard generation == self.resolveGeneration,
+                          self.engine.currentItem === item else { return }
+                    self.pendingPlaybackSeek = nil
+                    guard self.isPlaying else { return }
+                    self.engine.play()
+                    self.updateNowPlayingMetadata()
+                }
+            }
+        }
+        if position == 0 { engine.play() }
         updateNowPlayingMetadata()
     }
 
-    private func handleFailedItem(_ item: AVPlayerItem, track: Track, generation: Int) {
+    private func handleFailedItem(_ item: AVPlayerItem, url: URL, track: Track, generation: Int) {
         guard generation == resolveGeneration,
               engine.currentItem === item,
               currentTrack?.id == track.id else { return }
@@ -797,6 +820,29 @@ final class PlayerService {
         engine.replaceCurrentItem(with: nil)
         resolveGeneration += 1
         let retryGeneration = resolveGeneration
+        guard isPlaying else {
+            isResolvingURL = false
+            isBuffering = false
+            return
+        }
+        let twin = alternativeSource == nil
+            ? item.error.flatMap { cdnPolicy.failover(from: url, error: $0) }
+            : nil
+        if alternativeSource == nil, !attemptedOfficialRecovery {
+            attemptedOfficialRecovery = true
+            let resumeAt = progress
+            isPlaying = false
+            isResolvingURL = true
+            isBuffering = true
+            Task {
+                if let twin {
+                    await beginPlayback(url: twin, track: track, generation: retryGeneration, startingAt: resumeAt)
+                } else {
+                    await resolveAndPlay(track, generation: retryGeneration, startingAt: resumeAt)
+                }
+            }
+            return
+        }
         guard enablesAlternativeSources else {
             handleUnavailableTrack(track)
             return
@@ -837,7 +883,6 @@ final class PlayerService {
             handleUnavailableTrack(track)
             return
         }
-        consecutiveFailures = 0
         attemptedAlternativeSources.insert(resolved.source)
         alternativeSource = resolved.source
         servedQuality = nil
