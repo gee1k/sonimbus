@@ -50,6 +50,8 @@
   --profile "你的Profile名称"
 ```
 
+主应用与 `SonimbusTopShelf` 扩展必须使用同一个 App Group，并分别安装启用该 App Group 的 App Store Profile。脚本会分别自动查找；扩展 Profile 也可通过 `--top-shelf-profile` 指定。主应用和扩展的营销版本、Build Number 必须保持一致。
+
 Profile 与证书参数都是可选的，但只适用于手动签名模式。
 
 ### Build Number 与输出

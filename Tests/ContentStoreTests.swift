@@ -99,3 +99,25 @@ private func makePlaylistDetail(id: Int, name: String) throws -> PlaylistDetail 
     ])
     return try JSONDecoder().decode(PlaylistDetail.self, from: data)
 }
+
+@MainActor
+@Test("切换账号后丢弃迟到的加载结果且不会污染新请求")
+func contentCacheDiscardsInFlightResultsAfterReset() async throws {
+    let cache = ContentCache<Int, String>(lifetime: 300)
+    var finishOldRequest: CheckedContinuation<String, Never>?
+    let oldRequest = Task {
+        try await cache.load(for: 1) { _ in
+            await withCheckedContinuation { finishOldRequest = $0 }
+        }
+    }
+    while finishOldRequest == nil { await Task.yield() }
+    cache.removeAll()
+    let fresh = try await cache.load(for: 1) { _ in "新账号内容" }
+    finishOldRequest?.resume(returning: "旧账号内容")
+    do {
+        _ = try await oldRequest.value
+        Issue.record("不应返回旧账号的加载结果")
+    } catch is CancellationError {} catch { throw error }
+    #expect(fresh == "新账号内容")
+    #expect(cache.value(for: 1) == "新账号内容")
+}

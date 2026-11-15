@@ -15,6 +15,7 @@ final class ContentCache<Key: Hashable, Value> {
     @ObservationIgnored private let now: () -> Date
     @ObservationIgnored private var inFlight: [Key: Task<Value, Error>] = [:]
     private var entries: [Key: Entry] = [:]
+    private var generation = 0
 
     init(
         lifetime: TimeInterval,
@@ -48,15 +49,29 @@ final class ContentCache<Key: Hashable, Value> {
         try await request(for: key, loader: loader)
     }
 
+    func removeAll() {
+        generation &+= 1
+        inFlight.values.forEach { $0.cancel() }
+        inFlight.removeAll()
+        entries.removeAll()
+    }
+
     private func request(for key: Key, loader: @escaping Loader) async throws -> Value {
-        if let existing = inFlight[key] { return try await existing.value }
+        if let existing = inFlight[key] {
+            let requestGeneration = generation
+            let value = try await existing.value
+            guard generation == requestGeneration else { throw CancellationError() }
+            return value
+        }
 
         removeExpiredEntries(at: now())
+        let requestGeneration = generation
         let task = Task { try await loader(key) }
         inFlight[key] = task
-        defer { inFlight[key] = nil }
+        defer { if generation == requestGeneration { inFlight[key] = nil } }
 
         let value = try await task.value
+        guard generation == requestGeneration else { throw CancellationError() }
         entries[key] = Entry(value: value, loadedAt: now())
         return value
     }
@@ -119,4 +134,14 @@ final class ContentStore {
     let dailySongs = ContentCache<DailySongsKey, [Track]>(lifetime: 24 * 60 * 60)
     let playRecords = ContentCache<PlayRecordsKey, [PlayRecordItem]>(lifetime: 2 * 60)
     let cloudMusic = ContentCache<Int, NeteaseAPI.CloudResponse>(lifetime: 2 * 60)
+
+    func removeAll() {
+        playlists.removeAll()
+        albums.removeAll()
+        artists.removeAll()
+        mvs.removeAll()
+        dailySongs.removeAll()
+        playRecords.removeAll()
+        cloudMusic.removeAll()
+    }
 }

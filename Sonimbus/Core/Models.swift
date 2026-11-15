@@ -256,7 +256,7 @@ struct TrackPrivilege: Codable, Hashable {
     let maxbr: Int?
 }
 
-struct UserProfile: Decodable, Hashable {
+struct UserProfile: Codable, Hashable {
     let userId: Int
     let nickname: String
     let avatarUrl: String?

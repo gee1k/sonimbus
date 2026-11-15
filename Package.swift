@@ -11,13 +11,15 @@ let package = Package(
         .target(
             name: "SonimbusCore",
             path: "Sonimbus/Core",
-            exclude: ["AccountStore.swift", "PlayerService.swift", "MediaTransferService.swift"],
+            exclude: ["AccountStore.swift", "PlayerService.swift", "MediaTransferService.swift", "TopShelfPublisher.swift"],
             sources: [
                 "Models.swift",
                 "NowPlayingInteraction.swift",
                 "LyricsParser.swift",
                 "NeteaseCrypto.swift",
                 "NeteaseClient.swift",
+                "SavedAccounts.swift",
+                "TopShelfContent.swift",
                 "NeteaseAPI.swift",
                 "ContentStore.swift",
                 "UnblockService.swift",

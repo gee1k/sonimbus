@@ -35,15 +35,14 @@ enum AuthenticationCookieArchive {
     }
 }
 
-private enum AuthenticationCookieKeychain {
+enum AuthenticationCookieKeychain {
     private static let log = Logger(
         subsystem: "com.svend.sonimbus",
         category: "CredentialStorage"
     )
     private static let service = "com.svend.sonimbus.netease-authentication"
-    private static let account = "cookies"
 
-    private static var query: [String: Any] {
+    private static func query(account: String) -> [String: Any] {
         [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
@@ -51,8 +50,8 @@ private enum AuthenticationCookieKeychain {
         ]
     }
 
-    static func read() -> Data? {
-        var readQuery = query
+    static func read(account: String = "cookies") -> Data? {
+        var readQuery = query(account: account)
         readQuery[kSecReturnData as String] = true
         readQuery[kSecMatchLimit as String] = kSecMatchLimitOne
         var result: CFTypeRef?
@@ -63,7 +62,8 @@ private enum AuthenticationCookieKeychain {
     }
 
     @discardableResult
-    static func write(_ data: Data) -> Bool {
+    static func write(_ data: Data, account: String = "cookies") -> Bool {
+        let query = query(account: account)
         let attributes = [kSecValueData as String: data]
         let updateStatus = SecItemUpdate(query as CFDictionary, attributes as CFDictionary)
         if updateStatus == errSecSuccess { return true }
@@ -82,17 +82,27 @@ private enum AuthenticationCookieKeychain {
         return addStatus == errSecSuccess
     }
 
-    static func remove() {
-        SecItemDelete(query as CFDictionary)
+    static func remove(account: String = "cookies") {
+        SecItemDelete(query(account: account) as CFDictionary)
     }
 }
 
 final class NeteaseClient: @unchecked Sendable {
+    static var usesUITestFixture: Bool {
+#if DEBUG
+        let environment = ProcessInfo.processInfo.environment
+        return environment["SONIMBUS_UI_PLAYBACK_FIXTURE"] == "1"
+            || environment["SONIMBUS_UI_PLAYER_ACTIONS"] == "1"
+#else
+        return false
+#endif
+    }
+
 #if DEBUG && os(macOS)
     // Public API smoke tests must neither prompt for nor modify a real account.
-    static let shared = NeteaseClient(persistsAuthentication: ProcessInfo.processInfo.environment["NETEASE_API_SMOKE"] != "1")
+    static let shared = NeteaseClient(persistsAuthentication: !usesUITestFixture && ProcessInfo.processInfo.environment["NETEASE_API_SMOKE"] != "1", configuration: .default)
 #else
-    static let shared = NeteaseClient()
+    static let shared = NeteaseClient(persistsAuthentication: !usesUITestFixture, configuration: .default)
 #endif
 
     private static let log = Logger(subsystem: "com.svend.sonimbus", category: "NeteaseAPI")
@@ -108,10 +118,11 @@ final class NeteaseClient: @unchecked Sendable {
     private var cookies: [String: String] = [:]
     private var cookieGeneration = 0
     private let cookieFileURL: URL
+    private var authenticationGeneration = 0
 
-    private init(persistsAuthentication: Bool = true) {
+    // QR sign-in uses an isolated, in-memory client until the user confirms login.
+    init(persistsAuthentication: Bool = false, configuration: URLSessionConfiguration = .ephemeral) {
         self.persistsAuthentication = persistsAuthentication
-        let configuration = URLSessionConfiguration.default
         configuration.httpShouldSetCookies = false
         configuration.httpCookieAcceptPolicy = .never
         configuration.timeoutIntervalForRequest = 18
@@ -130,10 +141,11 @@ final class NeteaseClient: @unchecked Sendable {
         cookieFileURL = support.appendingPathComponent("cookies.json")
         deviceID = Self.loadDeviceID(in: support)
 
-        let keychainCookies = persistsAuthentication
-            ? AuthenticationCookieKeychain.read().flatMap(AuthenticationCookieArchive.decode) : nil
-        let fileCookies = persistsAuthentication
-            ? (try? Data(contentsOf: cookieFileURL)).flatMap(AuthenticationCookieArchive.decode) : nil
+        guard persistsAuthentication else { return }
+        let keychainCookies = AuthenticationCookieKeychain.read()
+            .flatMap(AuthenticationCookieArchive.decode)
+        let fileCookies = (try? Data(contentsOf: cookieFileURL))
+            .flatMap(AuthenticationCookieArchive.decode)
         cookies = keychainCookies ?? fileCookies ?? [:]
         if !cookies.isEmpty { persistCurrentCookies() }
     }
@@ -161,12 +173,36 @@ final class NeteaseClient: @unchecked Sendable {
         if didChange { persistCurrentCookies() }
     }
 
-    func clearAuthentication() {
+    func authenticationCookies() -> [String: String] {
         cookieLock.lock()
-        cookies.removeAll(keepingCapacity: true)
+        defer { cookieLock.unlock() }
+        return cookies
+    }
+
+    func replaceAuthentication(with values: [String: String]) {
+        cookieLock.lock()
+        cookies = values
         cookieGeneration &+= 1
+        authenticationGeneration &+= 1
         cookieLock.unlock()
         persistCurrentCookies()
+    }
+
+    func clearAuthentication() {
+        replaceAuthentication(with: [:])
+    }
+
+    private struct RequestAuthentication {
+        let cookies: [String: String]
+        let cookieGeneration: Int
+        let generation: Int
+    }
+
+    private func requestAuthentication() -> RequestAuthentication {
+        cookieLock.lock()
+        defer { cookieLock.unlock() }
+        return RequestAuthentication(cookies: cookies, cookieGeneration: cookieGeneration,
+                                     generation: authenticationGeneration)
     }
 
     func weapi(
@@ -174,23 +210,24 @@ final class NeteaseClient: @unchecked Sendable {
         _ payload: [String: Any] = [:],
         requestTimeout: TimeInterval? = nil
     ) async throws -> Data {
+        let authentication = requestAuthentication()
         var body = payload
-        body["csrf_token"] = cookie(named: "__csrf") ?? ""
+        body["csrf_token"] = authentication.cookies["__csrf"] ?? ""
         let json = try JSONSerialization.data(withJSONObject: body)
         let encrypted = NeteaseCrypto.weapi(payload: json)
 
         var fullPath = path
-        if let csrf = cookie(named: "__csrf"), !csrf.isEmpty {
+        if let csrf = authentication.cookies["__csrf"], !csrf.isEmpty {
             fullPath += (path.contains("?") ? "&" : "?") + "csrf_token=\(csrf)"
         }
         guard let url = URL(string: "https://music.163.com/weapi\(fullPath)") else {
             throw NeteaseAPIError.invalidResponse
         }
         var request = URLRequest(url: url)
-        prepare(&request)
+        prepare(&request, cookies: authentication.cookies)
         if let requestTimeout { request.timeoutInterval = requestTimeout }
         request.httpBody = Self.encodeForm(encrypted)
-        return try await perform(request)
+        return try await perform(request, authentication: authentication)
     }
 
     func eapi(
@@ -199,6 +236,7 @@ final class NeteaseClient: @unchecked Sendable {
         cookieOverrides: [String: String] = [:],
         desktopIdentity: Bool = false
     ) async throws -> Data {
+        let authentication = requestAuthentication()
         let apiPath = "/api" + path
         var body = payload
         // Keep the existing playback/web-log profile. The full desktop cookie
@@ -210,9 +248,9 @@ final class NeteaseClient: @unchecked Sendable {
             "buildver": String(Int(Date().timeIntervalSince1970)),
             "resolution": "1920x1080", "channel": "",
         ]
-        if let musicU = cookie(named: "MUSIC_U") { header["MUSIC_U"] = musicU }
-        header["__csrf"] = cookie(named: "__csrf") ?? ""
-        if let nmtid = cookie(named: "NMTID"), !nmtid.isEmpty { header["NMTID"] = nmtid }
+        if let musicU = authentication.cookies["MUSIC_U"] { header["MUSIC_U"] = musicU }
+        header["__csrf"] = authentication.cookies["__csrf"] ?? ""
+        if let nmtid = authentication.cookies["NMTID"], !nmtid.isEmpty { header["NMTID"] = nmtid }
         header.merge(cookieOverrides) { _, override in override }
         body["header"] = header
         if desktopIdentity { body["e_r"] = false }
@@ -223,13 +261,13 @@ final class NeteaseClient: @unchecked Sendable {
             throw NeteaseAPIError.invalidResponse
         }
         var request = URLRequest(url: url)
-        prepare(&request, cookieOverrides: cookieOverrides)
+        prepare(&request, cookies: authentication.cookies, cookieOverrides: cookieOverrides)
         if desktopIdentity {
             request.setValue("NeteaseMusic 9.0.90/5038 (iPhone; iOS 16.2; zh_CN)", forHTTPHeaderField: "User-Agent")
-            request.setValue(cookieHeader(extra: header, overrides: header), forHTTPHeaderField: "Cookie")
+            request.setValue(Self.cookieHeader(cookies: authentication.cookies, extra: header, overrides: header), forHTTPHeaderField: "Cookie")
         }
         request.httpBody = Self.encodeForm(encrypted)
-        return try await perform(request)
+        return try await perform(request, authentication: authentication)
     }
 
     func decoded<T: Decodable>(_ type: T.Type, from data: Data) throws -> T {
@@ -285,41 +323,32 @@ final class NeteaseClient: @unchecked Sendable {
         ]
     }
 
-    private func prepare(_ request: inout URLRequest, cookieOverrides: [String: String] = [:]) {
+    private func prepare(_ request: inout URLRequest, cookies: [String: String], cookieOverrides: [String: String] = [:]) {
         request.httpMethod = "POST"
         request.setValue(Self.userAgent, forHTTPHeaderField: "User-Agent")
         request.setValue("https://music.163.com", forHTTPHeaderField: "Referer")
         request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
-        request.setValue(cookieHeader(extra: ["os": "pc", "appver": "3.1.17"], overrides: cookieOverrides), forHTTPHeaderField: "Cookie")
+        request.setValue(Self.cookieHeader(cookies: cookies, extra: ["os": "pc", "appver": "3.1.17"], overrides: cookieOverrides), forHTTPHeaderField: "Cookie")
     }
 
-    private func perform(_ request: URLRequest) async throws -> Data {
-        let requestCookieGeneration = currentCookieGeneration()
+    private func perform(_ request: URLRequest, authentication: RequestAuthentication) async throws -> Data {
+        try Task.checkCancellation()
         let (data, response) = try await session.data(for: request)
+        try Task.checkCancellation()
+        guard authentication.generation == requestAuthentication().generation else {
+            throw CancellationError()
+        }
         guard let http = response as? HTTPURLResponse else {
             throw NeteaseAPIError.invalidResponse
         }
         if let url = request.url {
-            absorbCookies(from: http, url: url, expectedGeneration: requestCookieGeneration)
+            absorbCookies(from: http, url: url, expectedGeneration: authentication.cookieGeneration)
         }
         guard (200..<300).contains(http.statusCode) else {
             Self.log.error("HTTP \(http.statusCode) at \(request.url?.path ?? "?")")
             throw NeteaseAPIError.http(http.statusCode)
         }
         return data
-    }
-
-    private func currentCookieGeneration() -> Int {
-        cookieLock.lock()
-        defer { cookieLock.unlock() }
-        return cookieGeneration
-    }
-
-    private func cookieHeader(extra: [String: String], overrides: [String: String]) -> String {
-        cookieLock.lock()
-        let snapshot = cookies
-        cookieLock.unlock()
-        return Self.cookieHeader(cookies: snapshot, extra: extra, overrides: overrides)
     }
 
     static func cookieHeader(

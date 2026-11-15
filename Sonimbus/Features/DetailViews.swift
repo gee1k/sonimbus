@@ -1170,6 +1170,7 @@ private struct InlineMVPlayer: UIViewRepresentable {
 }
 
 private struct TrackCollectionView: View {
+    @State private var pageIndex = 0
     @Environment(\.openNowPlaying) private var openNowPlaying
     let title: String
     let subtitle: String?
@@ -1198,152 +1199,213 @@ private struct TrackCollectionView: View {
 
     var body: some View {
         let originSurface = PlaybackOriginSurface.collection(source.playbackCollectionOrigin)
-        ScrollView {
-            LazyVStack(spacing: 32) {
-                HStack(alignment: .bottom, spacing: 42) {
-                    ArtworkView(
-                        url: artworkURL,
-                        cornerRadius: circularArtwork ? 165 : 26,
-                        symbol: circularArtwork ? "person.wave.2.fill" : "music.note"
-                    )
-                    .frame(width: 330, height: 330)
-                    .shadow(color: .black.opacity(0.38), radius: 30, y: 16)
+        let visibleTracks = visibleTracks
+        let page = TrackListPage(itemCount: visibleTracks.count, index: pageIndex)
+        // List reuses offscreen rows, bounding the focus regions tvOS must inspect.
+        List {
+            HStack(alignment: .bottom, spacing: 42) {
+                ArtworkView(
+                    url: artworkURL,
+                    cornerRadius: circularArtwork ? 165 : 26,
+                    symbol: circularArtwork ? "person.wave.2.fill" : "music.note"
+                )
+                .frame(width: 330, height: 330)
+                .shadow(color: .black.opacity(0.38), radius: 30, y: 16)
 
-                    VStack(alignment: .leading, spacing: 16) {
-                        if let subtitle, !subtitle.isEmpty {
-                            Text(subtitle.uppercased())
-                                .font(.subheadline.bold())
-                                .tracking(1.3)
-                                .foregroundStyle(TVTheme.accent)
-                                .lineLimit(1)
-                        }
-                        Text(title)
-                            .font(.system(size: 50, weight: .bold, design: .rounded))
-                            .lineLimit(2)
-                        Text(metadata)
-                            .font(.headline)
-                            .foregroundStyle(TVTheme.secondaryText)
+                VStack(alignment: .leading, spacing: 16) {
+                    if let subtitle, !subtitle.isEmpty {
+                        Text(subtitle.uppercased())
+                            .font(.subheadline.bold())
+                            .tracking(1.3)
+                            .foregroundStyle(TVTheme.accent)
                             .lineLimit(1)
-                        if let description, !description.isEmpty {
-                            Text(description)
-                                .font(.body)
-                                .foregroundStyle(.white.opacity(0.7))
-                                .lineLimit(3)
-                                .lineSpacing(5)
-                                .frame(maxWidth: 900, alignment: .leading)
+                    }
+                    Text(title)
+                        .font(.system(size: 50, weight: .bold, design: .rounded))
+                        .lineLimit(2)
+                    Text(metadata)
+                        .font(.headline)
+                        .foregroundStyle(TVTheme.secondaryText)
+                        .lineLimit(1)
+                    if let description, !description.isEmpty {
+                        Text(description)
+                            .font(.body)
+                            .foregroundStyle(.white.opacity(0.7))
+                            .lineLimit(3)
+                            .lineSpacing(5)
+                            .frame(maxWidth: 900, alignment: .leading)
+                    }
+                    HStack(spacing: 18) {
+                        Button {
+                            player.play(visibleTracks, source: source)
+                            openNowPlaying?(.action(originSurface, .play))
+                        } label: {
+                            Label("播放", systemImage: "play.fill")
                         }
-                        HStack(spacing: 18) {
-                            Button {
-                                player.play(visibleTracks, source: source)
-                                openNowPlaying?(.action(originSurface, .play))
-                            } label: {
-                                Label("播放", systemImage: "play.fill")
-                            }
-                            .buttonStyle(TVPillButtonStyle(prominent: true))
-                            .playbackOriginFocus(.action(originSurface, .play))
-                            .disabled(visibleTracks.isEmpty)
+                        .buttonStyle(TVPillButtonStyle(prominent: true))
+                        .playbackOriginFocus(.action(originSurface, .play))
+                        .disabled(visibleTracks.isEmpty)
 
+                        Button {
+                            player.playShuffled(visibleTracks, source: source)
+                            openNowPlaying?(.action(originSurface, .shuffle))
+                        } label: {
+                            Label("随机播放", systemImage: "shuffle")
+                        }
+                        .buttonStyle(TVPillButtonStyle())
+                        .playbackOriginFocus(.action(originSurface, .shuffle))
+                        .disabled(visibleTracks.isEmpty)
+
+                        if let playlistID = source.playlistID,
+                           playlistID == account.likedSongsPlaylist?.id,
+                           let first = visibleTracks.first(where: { !$0.noCopyright }) {
                             Button {
-                                player.playShuffled(visibleTracks, source: source)
-                                openNowPlaying?(.action(originSurface, .shuffle))
+                                player.startIntelligence(from: first, playlistID: playlistID, returnTracks: visibleTracks) {
+                                    openNowPlaying?(.action(originSurface, .intelligence))
+                                }
                             } label: {
-                                Label("随机播放", systemImage: "shuffle")
+                                Label("心动模式", systemImage: "heart.fill")
                             }
                             .buttonStyle(TVPillButtonStyle())
-                            .playbackOriginFocus(.action(originSurface, .shuffle))
-                            .disabled(visibleTracks.isEmpty)
+                            .playbackOriginFocus(.action(originSurface, .intelligence))
+                        }
 
-                            if let playlistID = source.playlistID,
-                               playlistID == account.likedSongsPlaylist?.id,
-                               let first = visibleTracks.first(where: { !$0.noCopyright }) {
-                                Button {
-                                    player.startIntelligence(from: first, playlistID: playlistID) {
-                                        openNowPlaying?(.action(originSurface, .intelligence))
+                        if page.count > 1 {
+                            Menu("第 \(page.index + 1) / \(page.count) 页") {
+                                ForEach(0..<page.count, id: \.self) { index in
+                                    let target = TrackListPage(itemCount: visibleTracks.count, index: index)
+                                    Button("第 \(index + 1) 页 · \(target.range.lowerBound + 1)–\(target.range.upperBound) 首") {
+                                        pageIndex = index
                                     }
-                                } label: {
-                                    Label("心动模式", systemImage: "heart.fill")
                                 }
-                                .buttonStyle(TVPillButtonStyle())
-                                .playbackOriginFocus(.action(originSurface, .intelligence))
                             }
-
-                            if let collectionActionTitle, let collectionAction {
-                                Button(action: collectionAction) {
-                                    Label(collectionActionTitle, systemImage: collectionActionSymbol)
-                                }
-                                .buttonStyle(TVPillButtonStyle())
-                            }
-
-                            if let managementActionTitle, let managementAction {
-                                Button(action: managementAction) {
-                                    Label(managementActionTitle, systemImage: managementActionSymbol)
-                                }
-                                .buttonStyle(TVPillButtonStyle())
-                            }
-
+                            .buttonStyle(TVPillButtonStyle())
+                            .accessibilityIdentifier("track-page-menu")
                         }
-                        .padding(.top, 10)
+
+                        if let collectionActionTitle, let collectionAction {
+                            Button(action: collectionAction) {
+                                Label(collectionActionTitle, systemImage: collectionActionSymbol)
+                            }
+                            .buttonStyle(TVPillButtonStyle())
+                        }
+
+                        if let managementActionTitle, let managementAction {
+                            Button(action: managementAction) {
+                                Label(managementActionTitle, systemImage: managementActionSymbol)
+                            }
+                            .buttonStyle(TVPillButtonStyle())
+                        }
+
                     }
-                    .frame(maxWidth: 820, alignment: .leading)
-                    Spacer()
+                    .padding(.top, 10)
                 }
-                .focusSection()
+                .frame(maxWidth: .infinity, alignment: .leading)
+                Spacer()
+            }
+            .labelStyle(.titleAndIcon)
+            .focusSection()
+            .padding(.horizontal, TVTheme.horizontalPadding)
+            .padding(.top, 34)
+            .padding(.bottom, 23)
+            .listRowInsets(EdgeInsets())
+            .listRowBackground(Color.clear)
+
+            if visibleTracks.isEmpty {
+                EmptyStateView(
+                    title: "暂无可播放歌曲",
+                    message: "内容可能受版权或地区限制。",
+                    symbol: "music.note.slash"
+                )
+                .frame(height: 260)
                 .padding(.horizontal, TVTheme.horizontalPadding)
-                .padding(.top, 34)
-
-                if visibleTracks.isEmpty {
-                    EmptyStateView(
-                        title: "暂无可播放歌曲",
-                        message: "内容可能受版权或地区限制。",
-                        symbol: "music.note.slash"
+            } else {
+                ForEach(Array(visibleTracks.enumerated())[page.range], id: \.element.id) { index, track in
+                    TrackRow(
+                        track: track,
+                        index: index,
+                        tracks: visibleTracks,
+                        source: source,
+                        originSurface: originSurface
                     )
-                    .frame(height: 260)
                     .padding(.horizontal, TVTheme.horizontalPadding)
-                } else {
-                    LazyVStack(spacing: 9) {
-                        ForEach(Array(visibleTracks.enumerated()), id: \.element.id) { index, track in
-                            TrackRow(
-                                track: track,
-                                index: index,
-                                tracks: visibleTracks,
-                                source: source,
-                                originSurface: originSurface
-                            )
-                        }
-                    }
-                    .padding(.horizontal, TVTheme.horizontalPadding)
-                    .padding(.bottom, 80)
-                    .focusSection()
-                }
-
-                if !relatedAlbums.isEmpty {
-                    HorizontalShelf(title: "专辑", subtitle: "完整作品目录") {
-                        ForEach(relatedAlbums) { album in
-                            AlbumCard(album: album)
-                        }
-                    }
-                }
-
-                if !relatedMVs.isEmpty {
-                    HorizontalShelf(title: "音乐视频", subtitle: "来自这位歌手的 MV") {
-                        ForEach(relatedMVs) { mv in
-                            MVCard(mv: mv, queue: relatedMVs)
-                        }
-                    }
-                }
-
-                if !relatedArtists.isEmpty {
-                    HorizontalShelf(title: "相似歌手") {
-                        ForEach(relatedArtists) { artist in
-                            ArtistCard(artist: artist)
-                        }
-                    }
+                    .listRowInsets(EdgeInsets(top: 4.5, leading: 0, bottom: 4.5, trailing: 0))
+                    .listRowBackground(Color.clear)
                 }
             }
+
+            if page.count > 1 {
+                HStack(spacing: 24) {
+                    Button("上一页") { pageIndex = page.index - 1 }
+                        .disabled(page.index == 0)
+                    Text("\(page.range.lowerBound + 1)–\(page.range.upperBound) / \(visibleTracks.count) 首")
+                        .foregroundStyle(TVTheme.secondaryText)
+                    Button("下一页") { pageIndex = page.index + 1 }
+                        .disabled(page.index + 1 == page.count)
+                }
+                .buttonStyle(TVPillButtonStyle())
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 30)
+                .listRowInsets(EdgeInsets())
+                .listRowBackground(Color.clear)
+            }
+
+            if !relatedAlbums.isEmpty {
+                HorizontalShelf(title: "专辑", subtitle: "完整作品目录") {
+                    ForEach(relatedAlbums) { album in
+                        AlbumCard(album: album)
+                    }
+                }
+                .padding(.top, 23)
+                .listRowInsets(EdgeInsets())
+                .listRowBackground(Color.clear)
+            }
+
+            if !relatedMVs.isEmpty {
+                HorizontalShelf(title: "音乐视频", subtitle: "来自这位歌手的 MV") {
+                    ForEach(relatedMVs) { mv in
+                        MVCard(mv: mv, queue: relatedMVs)
+                    }
+                }
+                .padding(.top, 23)
+                .listRowInsets(EdgeInsets())
+                .listRowBackground(Color.clear)
+            }
+
+            if !relatedArtists.isEmpty {
+                HorizontalShelf(title: "相似歌手") {
+                    ForEach(relatedArtists) { artist in
+                        ArtistCard(artist: artist)
+                    }
+                }
+                .padding(.top, 23)
+                .listRowInsets(EdgeInsets())
+                .listRowBackground(Color.clear)
+            }
         }
+        .listStyle(.plain)
         .playbackOriginFocusScope(
             surfaces: [originSurface],
             defaultFocus: .action(originSurface, .play)
         )
+        .id(page.index)
     }
 }
+
+
+#if DEBUG
+struct LargePlaylistRegressionFixture: View {
+    private static let tracks: [Track] = (1...3_000).map { index in
+        Track(id: 9_000_000 + index, name: "测试歌曲 \(index)",
+              artists: [ArtistRef(id: 1, name: "测试歌手")],
+              album: AlbumRef(id: 1, name: "测试专辑", picUrl: nil), durationMS: 180_000)
+    }
+
+    var body: some View {
+        TrackCollectionView(title: "大歌单回归测试", subtitle: nil, description: nil,
+                            artworkURL: nil, metadata: "3000 首歌曲", tracks: Self.tracks,
+                            source: .playlist(9_000_000))
+            .background(TVBackground())
+    }
+}
+#endif

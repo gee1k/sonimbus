@@ -2,7 +2,7 @@ import Foundation
 import SwiftUI
 import UIKit
 
-private actor RemoteImageRepository {
+actor RemoteImageRepository {
     static let shared = RemoteImageRepository()
 
     private let memoryCache: NSCache<NSURL, NSData>
@@ -75,7 +75,7 @@ private actor RemoteImageRepository {
 }
 
 @MainActor
-private final class DecodedRemoteImageCache {
+final class DecodedRemoteImageCache {
     static let shared = DecodedRemoteImageCache()
 
     private let cache: NSCache<NSURL, UIImage>
@@ -143,7 +143,12 @@ struct CachedRemoteImage<Content: View>: View {
         do {
             let data = try await RemoteImageRepository.shared.data(for: url)
             guard !Task.isCancelled else { return }
-            guard let image = UIImage(data: data) else {
+            // Decode off the main thread; lazy UIImage decoding stalls focus scrolling.
+            let decoded = await Task.detached(priority: .userInitiated) {
+                UIImage(data: data)?.preparingForDisplay()
+            }.value
+            guard !Task.isCancelled else { return }
+            guard let image = decoded else {
                 throw URLError(.cannotDecodeContentData)
             }
             DecodedRemoteImageCache.shared.insert(image, for: url)
@@ -174,11 +179,7 @@ struct ArtworkView: View {
                 case .success(let image):
                     image.resizable().scaledToFill()
                 case .empty:
-                    placeholder.overlay {
-                        if url != nil {
-                            ProgressView().tint(.white.opacity(0.75))
-                        }
-                    }
+                    placeholder
                 case .failure:
                     placeholder
                 @unknown default:
@@ -471,7 +472,7 @@ struct TrackRow: View {
                 .font(.system(size: 27, weight: .medium, design: .rounded).monospacedDigit())
                 .frame(width: 56)
 
-                ArtworkView(url: track.artworkURL, cornerRadius: 10)
+                ArtworkView(url: track.album.picUrl.flatMap { ArtworkURL.make($0, size: 160) }, cornerRadius: 10)
                     .frame(width: 60, height: 60)
                 VStack(alignment: .leading, spacing: 4) {
                     HStack(spacing: 9) {
@@ -773,7 +774,7 @@ struct TrackRowButtonStyle: ButtonStyle {
             }
             .foregroundStyle(isFocused ? Color.black : Color.white)
             .scaleEffect(isFocused && !reduceMotion ? 1.015 : (configuration.isPressed ? 0.99 : 1))
-            .shadow(color: .black.opacity(isFocused ? 0.3 : 0), radius: 18, y: 8)
+            .shadow(color: .black.opacity(isFocused ? 0.3 : 0), radius: isFocused ? 18 : 0, y: isFocused ? 8 : 0)
             .animation(reduceMotion ? nil : .easeOut(duration: 0.16), value: isFocused)
     }
 }
